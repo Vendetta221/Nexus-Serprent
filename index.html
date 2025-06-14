@@ -4,7 +4,72 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Nexus Serpent</title>
+    
+    <!-- Исправленная Content Security Policy для Firebase -->
+    <meta http-equiv="Content-Security-Policy" content="
+        default-src 'self'; 
+        script-src 'self' 'unsafe-inline' 'unsafe-eval' 
+            https://www.gstatic.com 
+            https://cdnjs.cloudflare.com 
+            https://*.firebaseapp.com 
+            https://*.googleapis.com 
+            https://*.firebasedatabase.app; 
+        connect-src 'self' 
+            https://*.googleapis.com 
+            https://*.firebaseio.com 
+            https://*.firebaseapp.com 
+            https://*.firebasedatabase.app 
+            wss://*.firebaseio.com 
+            wss://*.firebasedatabase.app; 
+        style-src 'self' 'unsafe-inline'; 
+        img-src 'self' data: https:; 
+        font-src 'self' data:;
+        object-src 'none';
+        base-uri 'self';
+        form-action 'self';
+    ">
+    
     <link rel="stylesheet" href="style.css">
+    
+    <!-- Firebase SDK для Realtime Database -->
+    <script type="module">
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
+        import { getDatabase, ref, push, onValue, off, orderByChild, query, limitToLast } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js';
+        
+        // Ваша конфигурация Firebase
+        const firebaseConfig = {
+            apiKey: "d6A2GGfEjEvMlyiUzBuHAv8vUV5G_Mw-YIjF74ZAR4s",
+            authDomain: "nexus-serpent-game.firebaseapp.com",
+            databaseURL: "https://nexus-serpent-game-default-rtdb.europe-west1.firebasedatabase.app",
+            projectId: "nexus-serpent-game",
+            storageBucket: "nexus-serpent-game.firebasestorage.app",
+            messagingSenderId: "635862426550",
+            appId: "1:635862426550:web:cb46b0e57f424e58665717",
+            measurementId: "G-2ZGDRYZEBH"
+        };
+        
+        try {
+            // Инициализация Firebase
+            const app = initializeApp(firebaseConfig);
+            const database = getDatabase(app);
+            
+            // Делаем доступными глобально для основного скрипта
+            window.firebaseDB = database;
+            window.firebaseFunctions = { ref, push, onValue, off, orderByChild, query, limitToLast };
+            
+            // Помечаем, что Firebase готов
+            window.firebaseReady = true;
+            
+            // Диспатчим событие для основного скрипта
+            window.dispatchEvent(new CustomEvent('firebaseReady'));
+            
+            console.log('Firebase initialized successfully');
+        } catch (error) {
+            console.error('Firebase initialization error:', error);
+            window.firebaseReady = false;
+            window.dispatchEvent(new CustomEvent('firebaseError', { detail: error }));
+        }
+    </script>
 </head>
 <body>
     <div class="game-container">
@@ -14,15 +79,30 @@
             <br>
             <button class="start-btn" id="startBtn">START GAME</button>
             <button class="start-btn" id="viewLeaderboardBtn">VIEW LEADERBOARD</button>
+            
+            <div id="connectionStatus" style="margin-top: 15px; font-size: 12px; color: #888;">
+                🔄 Connecting to online leaderboard...
+            </div>
         </div>
 
-        <div class="leaderboard-screen" id="leaderboardScreen">
-            <h1>🏆 LEADERBOARD</h1>
-            <div id="playerCount" style="color: #aaaaaa; margin-bottom: 10px;">Unique Players: 0</div>
-            <div class="leaderboard" style="margin-top: 20px;">
-                <div id="mainLeaderboardList"></div>
+        <div class="leaderboard-screen" id="leaderboardScreen" style="display: none;">
+            <h1>🏆 ONLINE LEADERBOARD</h1>
+            <div id="playerCount" style="color: #aaaaaa; margin-bottom: 10px; line-height: 1.4;">
+                <div>Total Games: <span id="totalGames">Loading...</span></div>
+                <div>Unique Players: <span id="uniquePlayers">Loading...</span></div>
+                <div style="font-size: 11px; color: #666;">🌐 Live updates</div>
             </div>
-            <button class="start-btn" id="backToMenuBtn">BACK TO MENU</button>
+            <div class="leaderboard" style="margin-top: 20px;">
+                <div id="mainLeaderboardList">
+                    <div style="text-align: center; color: #888888; padding: 20px;">
+                        🔄 Loading online scores...
+                    </div>
+                </div>
+            </div>
+            <div style="margin-top: 15px;">
+                <button class="start-btn" id="backToMenuBtn">BACK TO MENU</button>
+                <button class="start-btn" id="refreshLeaderboardBtn" style="background: linear-gradient(145deg, #4CAF50, #45a049); color: white;">🔄 REFRESH</button>
+            </div>
         </div>
 
         <div class="game-header">
@@ -42,9 +122,15 @@
         <h2 style="color: #ffffff; margin-bottom: 10px;">GAME OVER</h2>
         <p style="color: #aaaaaa; margin-bottom: 20px;">Your Score: <span id="finalScore">0</span></p>
         
+        <div id="uploadStatus" style="margin-bottom: 15px; font-size: 12px;">
+            <span id="uploadMessage">📤 Uploading to online leaderboard...</span>
+        </div>
+        
         <div class="leaderboard" id="leaderboard">
-            <h3>🏆 LEADERBOARD</h3>
-            <div id="leaderboardList"></div>
+            <h3>🏆 TOP SCORES</h3>
+            <div id="leaderboardList">
+                <div style="text-align: center; color: #888888;">Loading...</div>
+            </div>
         </div>
         
         <button class="restart-btn" id="restartBtn">PLAY AGAIN</button>
