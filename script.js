@@ -974,12 +974,25 @@ document.addEventListener('DOMContentLoaded', function() {
         // Добавляем отладочную информацию
         const debugInfo = document.getElementById('debugInfo');
         const envInfo = document.getElementById('envInfo');
+        const protectionInfo = document.getElementById('protectionInfo');
+        
         if (debugInfo && envInfo && !isProduction) {
             debugInfo.style.display = 'block';
             envInfo.textContent = `${isProduction ? 'Production' : 'Development'} | ${window.location.hostname} | Firebase: ${status}`;
         }
         
+        if (protectionInfo) {
+            const protectionStatus = window.APP_PROTECTED ? 'Active ✅' : 'Inactive ❌';
+            protectionInfo.textContent = protectionStatus;
+            protectionInfo.style.color = window.APP_PROTECTED ? '#4CAF50' : '#f44336';
+        }
+        
         console.log(`Connection status: ${status} - ${message}`);
+        
+        // Дополнительный лог для защиты
+        if (window.EXTENSION_PROTECTION_LOG) {
+            console.log('Extension protection log:', window.EXTENSION_PROTECTION_LOG);
+        }
     }
 
     // Инициализация Firebase и игры
@@ -1094,4 +1107,60 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Запускаем инициализацию
     initializeGame();
+    
+    // Глобальные функции для отладки
+    window.debugGameStatus = function() {
+        console.log('🎮 Game Debug Status:', {
+            gameState,
+            gameRunning,
+            score,
+            playerNickname,
+            isProduction,
+            isLocalhost,
+            firebaseReady,
+            leaderboardLength: leaderboard.length,
+            protectionActive: window.APP_PROTECTED,
+            extensionErrorsSuppressed: window.EXTENSION_ERRORS_SUPPRESSED
+        });
+    };
+    
+    window.debugFirebaseConnection = function() {
+        if (firebaseReady && database) {
+            console.log('🔥 Testing Firebase connection...');
+            
+            firebaseFunctions.onValue(
+                firebaseFunctions.ref(database, '.info/connected'),
+                (snapshot) => {
+                    console.log('Firebase connection test result:', snapshot.val());
+                },
+                { onlyOnce: true }
+            );
+        } else {
+            console.log('❌ Firebase not ready for testing');
+        }
+    };
+    
+    window.debugExtensionProtection = function() {
+        console.log('🛡️ Extension Protection Status:', {
+            appProtected: window.APP_PROTECTED,
+            errorsSuppressed: window.EXTENSION_ERRORS_SUPPRESSED,
+            ethereumExists: typeof window.ethereum !== 'undefined',
+            protectionLog: window.EXTENSION_PROTECTION_LOG || [],
+            userAgent: navigator.userAgent,
+            extensionScripts: Array.from(document.querySelectorAll('script')).filter(s => 
+                s.src && (s.src.includes('extension://') || s.src.includes('moz-extension://'))
+            ).length
+        });
+    };
+    
+    // Автоматическая отладка через 5 секунд после загрузки
+    setTimeout(() => {
+        if (!isProduction) {
+            console.log('📊 Automatic debug report:');
+            window.debugGameStatus();
+            window.debugExtensionProtection();
+            window.debugFirebaseConnection();
+        }
+    }, 5000);
+    
 });
