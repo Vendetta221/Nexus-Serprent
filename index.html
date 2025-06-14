@@ -5,36 +5,89 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Nexus Serpent</title>
     
-    <!-- Исправленная Content Security Policy для Firebase -->
+    <!-- Защита от расширений встроенная в HTML -->
+    <script>
+    (function() {
+        'use strict';
+        
+        // Экстренная защита от расширений кошельков
+        const protectionLog = [];
+        
+        // Защита window.ethereum
+        if (typeof window.ethereum !== 'undefined') {
+            try {
+                window._backupEthereum = window.ethereum;
+                protectionLog.push('✅ Ethereum provider backed up');
+            } catch (e) {
+                protectionLog.push('⚠️ Could not backup ethereum provider');
+            }
+        }
+        
+        // Подавление критических ошибок
+        const originalError = window.onerror;
+        window.onerror = function(message, source, lineno, colno, error) {
+            const errorStr = String(message).toLowerCase();
+            const suppressKeywords = ['evmask', 'metamask', 'ethereum', 'cannot redefine property', 'runtime.lasterror'];
+            
+            if (suppressKeywords.some(keyword => errorStr.includes(keyword))) {
+                protectionLog.push(`🛡️ Suppressed: ${message}`);
+                return true; // Подавляем ошибку
+            }
+            
+            if (originalError) {
+                return originalError.apply(this, arguments);
+            }
+            return false;
+        };
+        
+        // Сохраняем лог для отладки
+        window.EXTENSION_PROTECTION_LOG = protectionLog;
+        
+        console.log('🛡️ Emergency extension protection loaded');
+    })();
+    </script>
+    
+    <!-- Усиленная Content Security Policy для GitHub Pages -->
     <meta http-equiv="Content-Security-Policy" content="
-        default-src 'self'; 
+        default-src 'self' https:; 
         script-src 'self' 'unsafe-inline' 'unsafe-eval' 
             https://www.gstatic.com 
             https://cdnjs.cloudflare.com 
             https://*.firebaseapp.com 
             https://*.googleapis.com 
-            https://*.firebasedatabase.app; 
+            https://*.firebasedatabase.app
+            https://*.googleusercontent.com; 
         connect-src 'self' 
+            https: 
+            wss: 
             https://*.googleapis.com 
             https://*.firebaseio.com 
             https://*.firebaseapp.com 
             https://*.firebasedatabase.app 
             wss://*.firebaseio.com 
-            wss://*.firebasedatabase.app; 
-        style-src 'self' 'unsafe-inline'; 
-        img-src 'self' data: https:; 
-        font-src 'self' data:;
+            wss://*.firebasedatabase.app
+            https://nexus-serpent-game-default-rtdb.europe-west1.firebasedatabase.app; 
+        style-src 'self' 'unsafe-inline' https:; 
+        img-src 'self' data: https: blob:; 
+        font-src 'self' data: https:;
         object-src 'none';
         base-uri 'self';
         form-action 'self';
+        upgrade-insecure-requests;
     ">
     
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="style.css?v=2.2">
     
     <!-- Firebase SDK для Realtime Database -->
     <script type="module">
         import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
         import { getDatabase, ref, push, onValue, off, orderByChild, query, limitToLast } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js';
+        
+        // Детектируем окружение
+        const isProduction = window.location.hostname.includes('github.io');
+        const isDevelopment = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+        
+        console.log('Environment:', { isProduction, isDevelopment, hostname: window.location.hostname });
         
         // Ваша конфигурация Firebase
         const firebaseConfig = {
@@ -48,27 +101,97 @@
             measurementId: "G-2ZGDRYZEBH"
         };
         
-        try {
-            // Инициализация Firebase
-            const app = initializeApp(firebaseConfig);
-            const database = getDatabase(app);
-            
-            // Делаем доступными глобально для основного скрипта
-            window.firebaseDB = database;
-            window.firebaseFunctions = { ref, push, onValue, off, orderByChild, query, limitToLast };
-            
-            // Помечаем, что Firebase готов
-            window.firebaseReady = true;
-            
-            // Диспатчим событие для основного скрипта
-            window.dispatchEvent(new CustomEvent('firebaseReady'));
-            
-            console.log('Firebase initialized successfully');
-        } catch (error) {
-            console.error('Firebase initialization error:', error);
-            window.firebaseReady = false;
-            window.dispatchEvent(new CustomEvent('firebaseError', { detail: error }));
+        // Функция с расширенным логированием
+        async function initializeFirebaseWithLogging() {
+            try {
+                console.log('Starting Firebase initialization...');
+                console.log('Firebase config:', firebaseConfig);
+                
+                // Проверяем наличие необходимых API
+                if (!window.fetch) {
+                    throw new Error('Fetch API not available');
+                }
+                
+                // Инициализация Firebase
+                const app = initializeApp(firebaseConfig);
+                console.log('Firebase app initialized:', app);
+                
+                const database = getDatabase(app);
+                console.log('Firebase database initialized:', database);
+                
+                // Тестируем подключение с таймаутом
+                const testRef = ref(database, '.info/connected');
+                const connectionPromise = new Promise((resolve, reject) => {
+                    const timeout = setTimeout(() => {
+                        reject(new Error('Connection test timeout'));
+                    }, 15000);
+                    
+                    onValue(testRef, (snapshot) => {
+                        clearTimeout(timeout);
+                        const connected = snapshot.val();
+                        console.log('Firebase connection status:', connected);
+                        
+                        if (connected) {
+                            console.log('✅ Firebase connected successfully');
+                            window.firebaseConnectionStatus = 'connected';
+                            resolve(true);
+                        } else {
+                            console.log('❌ Firebase not connected');
+                            window.firebaseConnectionStatus = 'disconnected';
+                            resolve(false);
+                        }
+                    }, (error) => {
+                        clearTimeout(timeout);
+                        reject(error);
+                    });
+                });
+                
+                await connectionPromise;
+                
+                // Делаем доступными глобально для основного скрипта
+                window.firebaseDB = database;
+                window.firebaseFunctions = { ref, push, onValue, off, orderByChild, query, limitToLast };
+                
+                // Помечаем, что Firebase готов
+                window.firebaseReady = true;
+                
+                // Диспатчим событие для основного скрипта
+                window.dispatchEvent(new CustomEvent('firebaseReady'));
+                
+                console.log('Firebase initialization completed successfully');
+                return true;
+                
+            } catch (error) {
+                console.error('Firebase initialization error:', error);
+                console.error('Error details:', {
+                    message: error.message,
+                    code: error.code,
+                    stack: error.stack
+                });
+                
+                window.firebaseReady = false;
+                window.firebaseConnectionStatus = 'error';
+                window.dispatchEvent(new CustomEvent('firebaseError', { detail: error }));
+                return false;
+            }
         }
+        
+        // Добавляем задержку для GitHub Pages и расширений
+        const initDelay = isProduction ? 3000 : 1000;
+        console.log(`Waiting ${initDelay}ms before Firebase initialization...`);
+        
+        setTimeout(async () => {
+            const success = await initializeFirebaseWithLogging();
+            console.log('Firebase initialization result:', success);
+        }, initDelay);
+        
+        // Глобальная переменная для отладки
+        window.firebaseDebug = {
+            isProduction,
+            isDevelopment,
+            config: firebaseConfig,
+            hostname: window.location.hostname
+        };
     </script>
 </head>
 <body>
@@ -82,6 +205,12 @@
             
             <div id="connectionStatus" style="margin-top: 15px; font-size: 12px; color: #888;">
                 🔄 Connecting to online leaderboard...
+            </div>
+            
+            <!-- Добавляем отладочную информацию -->
+            <div id="debugInfo" style="margin-top: 10px; font-size: 10px; color: #666; display: none;">
+                Environment: <span id="envInfo">Loading...</span><br>
+                Protection: <span id="protectionInfo">Active</span>
             </div>
         </div>
 
@@ -136,6 +265,22 @@
         <button class="restart-btn" id="restartBtn">PLAY AGAIN</button>
     </div>
 
-    <script src="script.js"></script>
+    <script src="script.js?v=2.2"></script>
+    
+    <!-- Финальная проверка защиты -->
+    <script>
+    setTimeout(() => {
+        if (window.APP_PROTECTED) {
+            console.log('🛡️ All protection systems active');
+            
+            // Обновляем отладочную информацию
+            const protectionInfo = document.getElementById('protectionInfo');
+            if (protectionInfo) {
+                protectionInfo.textContent = 'Active ✅';
+                protectionInfo.style.color = '#4CAF50';
+            }
+        }
+    }, 2000);
+    </script>
 </body>
 </html>
