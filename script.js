@@ -1,42 +1,89 @@
-// Защита от конфликтов с расширениями браузера
+// УСИЛЕННАЯ ЗАЩИТА ОТ РАСШИРЕНИЙ БРАУЗЕРА
 (function() {
     'use strict';
     
-    // Изолируем window.ethereum если он существует
+    console.log('🛡️ Initializing extension protection...');
+    
+    // Заморозка объекта window.ethereum для предотвращения конфликтов
     if (typeof window.ethereum !== 'undefined') {
         try {
-            // Создаем резервную копию для случая, если понадобится
+            // Создаем резервную копию
             window._originalEthereum = window.ethereum;
-            console.log('Ethereum provider detected and backed up');
+            
+            // Заморозка свойства для предотвращения переопределений
+            Object.defineProperty(window, 'ethereum', {
+                value: window.ethereum,
+                writable: false,
+                configurable: false
+            });
+            
+            console.log('✅ Ethereum provider protected from redefinition');
         } catch (error) {
-            console.log('Error backing up ethereum provider:', error);
+            console.log('⚠️ Could not protect ethereum property:', error.message);
         }
     }
     
-    // Подавляем ошибки MetaMask
+    // Перехват и подавление ошибок от расширений
     const originalConsoleError = console.error;
+    const originalConsoleWarn = console.warn;
+    
+    // Список ключевых слов для фильтрации ошибок расширений
+    const extensionErrorKeywords = [
+        'MetaMask',
+        'ethereum',
+        'inpage.js',
+        'evmAsk.js',
+        'Cannot set property ethereum',
+        'Cannot redefine property',
+        'Could not establish connection',
+        'Receiving end does not exist',
+        'runtime.lastError',
+        'Extension context invalidated',
+        'chrome-extension://',
+        'moz-extension://',
+        'injected.js',
+        'content-script.js'
+    ];
+    
+    function shouldSuppressMessage(message) {
+        const messageStr = String(message).toLowerCase();
+        return extensionErrorKeywords.some(keyword => 
+            messageStr.includes(keyword.toLowerCase())
+        );
+    }
+    
+    // Переопределяем console.error
     console.error = function(...args) {
         const message = args.join(' ');
-        
-        // Фильтруем ошибки MetaMask и других кошельков
-        if (message.includes('MetaMask') || 
-            message.includes('ethereum') || 
-            message.includes('inpage.js') ||
-            message.includes('Cannot set property ethereum')) {
-            return; // Не показываем эти ошибки
+        if (shouldSuppressMessage(message)) {
+            return; // Подавляем ошибки расширений
         }
-        
-        // Показываем остальные ошибки
         originalConsoleError.apply(console, args);
     };
     
-    // Подавляем ошибки Content Security Policy от расширений
+    // Переопределяем console.warn
+    console.warn = function(...args) {
+        const message = args.join(' ');
+        if (shouldSuppressMessage(message)) {
+            return; // Подавляем предупреждения расширений
+        }
+        originalConsoleWarn.apply(console, args);
+    };
+    
+    // Подавляем глобальные ошибки от расширений
     window.addEventListener('error', function(event) {
-        if (event.message && (
-            event.message.includes('Content Security Policy') ||
-            event.message.includes('eval') ||
-            event.message.includes('MetaMask') ||
-            event.message.includes('inpage.js')
+        if (event.message && shouldSuppressMessage(event.message)) {
+            event.preventDefault();
+            event.stopPropagation();
+            return false;
+        }
+        
+        // Проверяем источник ошибки
+        if (event.filename && (
+            event.filename.includes('chrome-extension://') ||
+            event.filename.includes('moz-extension://') ||
+            event.filename.includes('evmAsk.js') ||
+            event.filename.includes('inpage.js')
         )) {
             event.preventDefault();
             event.stopPropagation();
@@ -46,17 +93,76 @@
     
     // Подавляем unhandled promise rejections от расширений
     window.addEventListener('unhandledrejection', function(event) {
-        if (event.reason && event.reason.message && (
-            event.reason.message.includes('MetaMask') ||
-            event.reason.message.includes('ethereum') ||
-            event.reason.message.includes('inpage.js')
-        )) {
+        if (event.reason && event.reason.message && 
+            shouldSuppressMessage(event.reason.message)) {
+            event.preventDefault();
+            return false;
+        }
+        
+        // Проверяем стек ошибки
+        if (event.reason && event.reason.stack && 
+            shouldSuppressMessage(event.reason.stack)) {
             event.preventDefault();
             return false;
         }
     });
     
-    console.log('Extension conflict protection loaded');
+    // Защита от переопределения критических свойств
+    const protectedProperties = ['ethereum', 'web3'];
+    
+    protectedProperties.forEach(prop => {
+        if (typeof window[prop] !== 'undefined') {
+            try {
+                // Создаем геттер/сеттер для контроля доступа
+                const originalValue = window[prop];
+                let currentValue = originalValue;
+                
+                Object.defineProperty(window, prop, {
+                    get: function() {
+                        return currentValue;
+                    },
+                    set: function(newValue) {
+                        // Логируем попытки изменения, но не мешаем
+                        console.log(`🔒 Attempt to modify ${prop} detected and logged`);
+                        currentValue = newValue;
+                    },
+                    configurable: false
+                });
+            } catch (error) {
+                // Если не удалось защитить, продолжаем без ошибок
+                console.log(`⚠️ Could not protect ${prop}:`, error.message);
+            }
+        }
+    });
+    
+    // Дополнительная защита от runtime.lastError
+    if (typeof chrome !== 'undefined' && chrome.runtime) {
+        const originalAddListener = chrome.runtime.onMessage.addListener;
+        try {
+            chrome.runtime.onMessage.addListener = function(callback) {
+                const wrappedCallback = function(...args) {
+                    try {
+                        return callback.apply(this, args);
+                    } catch (error) {
+                        if (shouldSuppressMessage(error.message)) {
+                            return; // Подавляем ошибки
+                        }
+                        throw error;
+                    }
+                };
+                return originalAddListener.call(this, wrappedCallback);
+            };
+        } catch (error) {
+            // Игнорируем ошибки защиты chrome API
+        }
+    }
+    
+    // Создаем безопасное окружение для нашего приложения
+    window.APP_PROTECTED = true;
+    window.EXTENSION_ERRORS_SUPPRESSED = true;
+    
+    console.log('✅ Extension protection initialized successfully');
+    
 })();
 
 // Основной код игры
@@ -266,9 +372,12 @@ document.addEventListener('DOMContentLoaded', function() {
                 return;
             }
             
+            console.log('Setting up realtime leaderboard...');
+            
             const scoresRef = firebaseFunctions.ref(database, 'scores');
             const sortedQuery = firebaseFunctions.query(scoresRef, firebaseFunctions.orderByChild('score'));
             
+            // Слушаем изменения в данных
             firebaseFunctions.onValue(sortedQuery, (snapshot) => {
                 try {
                     const data = snapshot.val();
@@ -286,7 +395,10 @@ document.addEventListener('DOMContentLoaded', function() {
                             displayMainLeaderboard();
                         }
                         
-                        console.log(`Loaded ${leaderboard.length} scores from Firebase`);
+                        console.log(`Loaded ${leaderboard.length} scores from Firebase (realtime)`);
+                        
+                        // Подтверждаем что соединение работает
+                        updateConnectionStatus('connected', '🟢 Connected to online leaderboard', '#4CAF50');
                     }
                 } catch (error) {
                     console.error('Error processing realtime update:', error);
@@ -295,19 +407,27 @@ document.addEventListener('DOMContentLoaded', function() {
                 console.error('Firebase realtime error:', error);
                 firebaseReady = false;
                 
-                if (connectionStatusElement) {
-                    connectionStatusElement.innerHTML = '🔴 Connection lost, using local scores';
-                    connectionStatusElement.style.color = '#f44336';
+                updateConnectionStatus('disconnected', '🔴 Connection lost, using local scores', '#f44336');
+            });
+            
+            // Отдельно слушаем статус подключения
+            const connectedRef = firebaseFunctions.ref(database, '.info/connected');
+            firebaseFunctions.onValue(connectedRef, (snapshot) => {
+                const connected = snapshot.val();
+                console.log('Firebase .info/connected status:', connected);
+                
+                if (connected === true) {
+                    updateConnectionStatus('connected', '🟢 Connected to online leaderboard', '#4CAF50');
+                } else {
+                    updateConnectionStatus('disconnected', '🟠 Reconnecting to online leaderboard...', '#ff9800');
                 }
             });
             
-            if (connectionStatusElement) {
-                connectionStatusElement.innerHTML = '🟢 Connected to online leaderboard';
-                connectionStatusElement.style.color = '#4CAF50';
-            }
+            console.log('Realtime leaderboard setup completed');
             
         } catch (error) {
             console.error('Error setting up realtime updates:', error);
+            updateConnectionStatus('error', '🔴 Failed to setup realtime updates', '#f44336');
         }
     }
 
@@ -840,22 +960,84 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
+    // Детектируем окружение
+    const isProduction = window.location.hostname.includes('github.io');
+    const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+
+    // Обновляем статус соединения
+    function updateConnectionStatus(status, message, color) {
+        if (connectionStatusElement) {
+            connectionStatusElement.innerHTML = message;
+            connectionStatusElement.style.color = color;
+        }
+        
+        // Добавляем отладочную информацию
+        const debugInfo = document.getElementById('debugInfo');
+        const envInfo = document.getElementById('envInfo');
+        if (debugInfo && envInfo && !isProduction) {
+            debugInfo.style.display = 'block';
+            envInfo.textContent = `${isProduction ? 'Production' : 'Development'} | ${window.location.hostname} | Firebase: ${status}`;
+        }
+        
+        console.log(`Connection status: ${status} - ${message}`);
+    }
+
     // Инициализация Firebase и игры
     async function initializeGame() {
         // Сначала загружаем локальные данные
         loadLeaderboard();
         
+        updateConnectionStatus('connecting', '🔄 Connecting to online leaderboard...', '#888');
+        
         try {
-            // Ждем загрузки Firebase с таймаутом
+            console.log('Waiting for Firebase initialization...');
+            
+            // Увеличиваем таймаут для GitHub Pages
+            const timeoutMs = isProduction ? 30000 : 15000;
+            
             await Promise.race([
                 waitForFirebase(),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('Firebase timeout')), 15000))
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Firebase timeout')), timeoutMs))
             ]);
+            
+            console.log('Firebase ready event received');
             
             // Получаем Firebase объекты
             database = window.firebaseDB;
             firebaseFunctions = window.firebaseFunctions;
+            
+            if (!database || !firebaseFunctions) {
+                throw new Error('Firebase objects not available');
+            }
+            
             firebaseReady = true;
+            
+            // Дополнительная проверка соединения
+            await new Promise((resolve, reject) => {
+                const timeout = setTimeout(() => reject(new Error('Connection test timeout')), 10000);
+                
+                try {
+                    const connectedRef = firebaseFunctions.ref(database, '.info/connected');
+                    firebaseFunctions.onValue(connectedRef, (snapshot) => {
+                        clearTimeout(timeout);
+                        const connected = snapshot.val();
+                        console.log('Firebase connection test result:', connected);
+                        
+                        if (connected === true) {
+                            resolve(true);
+                        } else {
+                            reject(new Error('Firebase not connected'));
+                        }
+                    }, {
+                        onlyOnce: true
+                    });
+                } catch (error) {
+                    clearTimeout(timeout);
+                    reject(error);
+                }
+            });
+            
+            console.log('Firebase connection verified');
             
             // Загружаем начальные данные из Firebase
             const initialData = await loadLeaderboardFromFirebase();
@@ -872,20 +1054,22 @@ document.addEventListener('DOMContentLoaded', function() {
             // Настраиваем real-time обновления
             setupRealtimeLeaderboard();
             
-            console.log('Game initialized with Firebase');
+            updateConnectionStatus('connected', '🟢 Connected to online leaderboard', '#4CAF50');
+            console.log('Game initialized with Firebase successfully');
             
-            if (connectionStatusElement) {
-                connectionStatusElement.innerHTML = '🟢 Connected to online leaderboard';
-                connectionStatusElement.style.color = '#4CAF50';
-            }
         } catch (error) {
             console.error('Firebase initialization failed:', error);
             firebaseReady = false;
             
-            if (connectionStatusElement) {
-                connectionStatusElement.innerHTML = '🔴 Offline mode (local scores only)';
-                connectionStatusElement.style.color = '#f44336';
+            let errorMessage = '🔴 Offline mode (local scores only)';
+            
+            if (error.message.includes('timeout')) {
+                errorMessage = '⏱️ Connection timeout (using local scores)';
+            } else if (error.message.includes('blocked')) {
+                errorMessage = '🚫 Connection blocked (using local scores)';
             }
+            
+            updateConnectionStatus('failed', errorMessage, '#f44336');
         }
         
         // Инициализируем игру независимо от Firebase
@@ -897,15 +1081,15 @@ document.addEventListener('DOMContentLoaded', function() {
         setInterval(gameLoop, 150);
     }
 
-    // Слушаем ошибки Firebase
+    // Слушаем события Firebase
+    window.addEventListener('firebaseReady', (event) => {
+        console.log('Firebase ready event received in main script');
+    });
+
     window.addEventListener('firebaseError', (event) => {
         console.error('Firebase error event:', event.detail);
         firebaseReady = false;
-        
-        if (connectionStatusElement) {
-            connectionStatusElement.innerHTML = '🔴 Firebase connection failed';
-            connectionStatusElement.style.color = '#f44336';
-        }
+        updateConnectionStatus('error', '🔴 Firebase connection failed', '#f44336');
     });
 
     // Запускаем инициализацию
