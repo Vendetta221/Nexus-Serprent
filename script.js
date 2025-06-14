@@ -7,16 +7,12 @@
     // Заморозка объекта window.ethereum для предотвращения конфликтов
     if (typeof window.ethereum !== 'undefined') {
         try {
-            // Создаем резервную копию
             window._originalEthereum = window.ethereum;
-            
-            // Заморозка свойства для предотвращения переопределений
             Object.defineProperty(window, 'ethereum', {
                 value: window.ethereum,
                 writable: false,
                 configurable: false
             });
-            
             console.log('✅ Ethereum provider protected from redefinition');
         } catch (error) {
             console.log('⚠️ Could not protect ethereum property:', error.message);
@@ -27,22 +23,11 @@
     const originalConsoleError = console.error;
     const originalConsoleWarn = console.warn;
     
-    // Список ключевых слов для фильтрации ошибок расширений
     const extensionErrorKeywords = [
-        'MetaMask',
-        'ethereum',
-        'inpage.js',
-        'evmAsk.js',
-        'Cannot set property ethereum',
-        'Cannot redefine property',
-        'Could not establish connection',
-        'Receiving end does not exist',
-        'runtime.lastError',
-        'Extension context invalidated',
-        'chrome-extension://',
-        'moz-extension://',
-        'injected.js',
-        'content-script.js'
+        'MetaMask', 'ethereum', 'inpage.js', 'evmAsk.js', 'Cannot set property ethereum',
+        'Cannot redefine property', 'Could not establish connection', 'Receiving end does not exist',
+        'runtime.lastError', 'Extension context invalidated', 'chrome-extension://',
+        'moz-extension://', 'injected.js', 'content-script.js'
     ];
     
     function shouldSuppressMessage(message) {
@@ -52,21 +37,15 @@
         );
     }
     
-    // Переопределяем console.error
     console.error = function(...args) {
         const message = args.join(' ');
-        if (shouldSuppressMessage(message)) {
-            return; // Подавляем ошибки расширений
-        }
+        if (shouldSuppressMessage(message)) return;
         originalConsoleError.apply(console, args);
     };
     
-    // Переопределяем console.warn
     console.warn = function(...args) {
         const message = args.join(' ');
-        if (shouldSuppressMessage(message)) {
-            return; // Подавляем предупреждения расширений
-        }
+        if (shouldSuppressMessage(message)) return;
         originalConsoleWarn.apply(console, args);
     };
     
@@ -78,7 +57,6 @@
             return false;
         }
         
-        // Проверяем источник ошибки
         if (event.filename && (
             event.filename.includes('chrome-extension://') ||
             event.filename.includes('moz-extension://') ||
@@ -91,83 +69,28 @@
         }
     }, true);
     
-    // Подавляем unhandled promise rejections от расширений
     window.addEventListener('unhandledrejection', function(event) {
-        if (event.reason && event.reason.message && 
-            shouldSuppressMessage(event.reason.message)) {
+        if (event.reason && event.reason.message && shouldSuppressMessage(event.reason.message)) {
             event.preventDefault();
             return false;
         }
         
-        // Проверяем стек ошибки
-        if (event.reason && event.reason.stack && 
-            shouldSuppressMessage(event.reason.stack)) {
+        if (event.reason && event.reason.stack && shouldSuppressMessage(event.reason.stack)) {
             event.preventDefault();
             return false;
         }
     });
     
-    // Защита от переопределения критических свойств
-    const protectedProperties = ['ethereum', 'web3'];
-    
-    protectedProperties.forEach(prop => {
-        if (typeof window[prop] !== 'undefined') {
-            try {
-                // Создаем геттер/сеттер для контроля доступа
-                const originalValue = window[prop];
-                let currentValue = originalValue;
-                
-                Object.defineProperty(window, prop, {
-                    get: function() {
-                        return currentValue;
-                    },
-                    set: function(newValue) {
-                        // Логируем попытки изменения, но не мешаем
-                        console.log(`🔒 Attempt to modify ${prop} detected and logged`);
-                        currentValue = newValue;
-                    },
-                    configurable: false
-                });
-            } catch (error) {
-                // Если не удалось защитить, продолжаем без ошибок
-                console.log(`⚠️ Could not protect ${prop}:`, error.message);
-            }
-        }
-    });
-    
-    // Дополнительная защита от runtime.lastError
-    if (typeof chrome !== 'undefined' && chrome.runtime) {
-        const originalAddListener = chrome.runtime.onMessage.addListener;
-        try {
-            chrome.runtime.onMessage.addListener = function(callback) {
-                const wrappedCallback = function(...args) {
-                    try {
-                        return callback.apply(this, args);
-                    } catch (error) {
-                        if (shouldSuppressMessage(error.message)) {
-                            return; // Подавляем ошибки
-                        }
-                        throw error;
-                    }
-                };
-                return originalAddListener.call(this, wrappedCallback);
-            };
-        } catch (error) {
-            // Игнорируем ошибки защиты chrome API
-        }
-    }
-    
-    // Создаем безопасное окружение для нашего приложения
+    // Создаем безопасное окружение
     window.APP_PROTECTED = true;
     window.EXTENSION_ERRORS_SUPPRESSED = true;
     
     console.log('✅ Extension protection initialized successfully');
-    
 })();
 
 // Основной код игры
 document.addEventListener('DOMContentLoaded', function() {
-    console.log('DOM loaded');
+    console.log('🎮 DOM loaded, initializing game...');
     
     // Получаем все элементы DOM
     const canvas = document.getElementById('gameCanvas');
@@ -191,12 +114,13 @@ document.addEventListener('DOMContentLoaded', function() {
     let firebaseReady = false;
     let database = null;
     let firebaseFunctions = null;
+    let connectionRetryCount = 0;
+    const maxConnectionRetries = 3;
 
     // Создаем аудио контекст для звуков (только после взаимодействия)
     let audioContext;
     let audioInitialized = false;
     
-    // Функция для инициализации аудио после взаимодействия пользователя
     function initializeAudio() {
         if (audioInitialized) return;
         
@@ -209,13 +133,8 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
-    // Функция для создания звука "дзынь"
     function playEatSound() {
-        // Инициализируем аудио при первом воспроизведении
-        if (!audioInitialized) {
-            initializeAudio();
-        }
-        
+        if (!audioInitialized) initializeAudio();
         if (!audioContext) return;
         
         try {
@@ -279,12 +198,12 @@ document.addEventListener('DOMContentLoaded', function() {
     let dx = 0;
     let dy = 0;
 
-    // Пересчет размера при изменении окна
     window.addEventListener('resize', function() {
         resizeCanvas();
     });
 
-    // Firebase функции
+    // УЛУЧШЕННЫЕ FIREBASE ФУНКЦИИ
+    
     function waitForFirebase() {
         return new Promise((resolve, reject) => {
             if (window.firebaseReady) {
@@ -294,13 +213,51 @@ document.addEventListener('DOMContentLoaded', function() {
             
             const timeout = setTimeout(() => {
                 reject(new Error('Firebase timeout'));
-            }, 10000);
+            }, 20000); // Увеличен таймаут
             
-            window.addEventListener('firebaseReady', () => {
+            const handler = (event) => {
                 clearTimeout(timeout);
-                resolve();
-            });
+                window.removeEventListener('firebaseReady', handler);
+                console.log('🔥 Firebase ready event received with details:', event.detail);
+                resolve(event.detail);
+            };
+            
+            window.addEventListener('firebaseReady', handler);
         });
+    }
+
+    // Улучшенная функция обновления статуса
+    function updateConnectionStatus(status, message, color, showActions = false) {
+        if (connectionStatusElement) {
+            connectionStatusElement.innerHTML = message;
+            connectionStatusElement.style.color = color;
+        }
+        
+        // Обновляем отладочную информацию
+        const debugInfo = document.getElementById('debugInfo');
+        const envInfo = document.getElementById('envInfo');
+        const connectionInfo = document.getElementById('connectionInfo');
+        const protectionInfo = document.getElementById('protectionInfo');
+        
+        if (debugInfo && envInfo) {
+            if (showActions || status === 'failed') {
+                debugInfo.style.display = 'block';
+            }
+            envInfo.textContent = `${isProduction ? 'Production' : 'Development'} | ${window.location.hostname}`;
+        }
+        
+        if (connectionInfo) {
+            connectionInfo.textContent = `${status} | Retries: ${connectionRetryCount}`;
+            connectionInfo.style.color = color;
+        }
+        
+        if (protectionInfo) {
+            const protectionStatus = window.APP_PROTECTED ? 'Active ✅' : 'Inactive ❌';
+            protectionInfo.textContent = protectionStatus;
+            protectionInfo.style.color = window.APP_PROTECTED ? '#4CAF50' : '#f44336';
+        }
+        
+        console.log(`🔗 Connection status: ${status} - ${message}`);
     }
 
     async function saveScoreToFirebase(nickname, score) {
@@ -310,9 +267,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 return false;
             }
             
-            console.log(`Attempting to save score for ${nickname}: ${score}`);
+            console.log(`🔥 Attempting to save score for ${nickname}: ${score}`);
             
-            // Сначала ищем существующий результат этого игрока
             const scoresRef = firebaseFunctions.ref(database, 'scores');
             
             return new Promise((resolve, reject) => {
@@ -320,7 +276,6 @@ document.addEventListener('DOMContentLoaded', function() {
                     reject(new Error('Save timeout'));
                 }, 15000);
                 
-                // Получаем все результаты
                 firebaseFunctions.onValue(scoresRef, async (snapshot) => {
                     try {
                         clearTimeout(timeout);
@@ -328,7 +283,6 @@ document.addEventListener('DOMContentLoaded', function() {
                         let existingPlayerRecord = null;
                         let existingPlayerKey = null;
                         
-                        // Ищем существующий результат игрока
                         if (data) {
                             for (const [key, record] of Object.entries(data)) {
                                 if (record.name === nickname) {
@@ -353,19 +307,16 @@ document.addEventListener('DOMContentLoaded', function() {
                         
                         if (existingPlayerRecord) {
                             if (score > existingPlayerRecord.score) {
-                                // Новый результат лучше - удаляем старую запись и создаем новую
                                 try {
-                                    // Удаляем старую запись
                                     const oldRecordRef = firebaseFunctions.ref(database, `scores/${existingPlayerKey}`);
                                     await Promise.race([
                                         firebaseFunctions.remove(oldRecordRef),
-                                        new Promise((_, reject) => setTimeout(() => reject(new Error('Delete timeout')), 5000))
+                                        new Promise((_, reject) => setTimeout(() => reject(new Error('Delete timeout')), 8000))
                                     ]);
                                     
-                                    // Добавляем новую запись
                                     await Promise.race([
                                         firebaseFunctions.push(scoresRef, scoreData),
-                                        new Promise((_, reject) => setTimeout(() => reject(new Error('Add timeout')), 5000))
+                                        new Promise((_, reject) => setTimeout(() => reject(new Error('Add timeout')), 8000))
                                     ]);
                                     
                                     if (uploadMessageElement) {
@@ -373,27 +324,25 @@ document.addEventListener('DOMContentLoaded', function() {
                                         uploadMessageElement.style.color = '#4CAF50';
                                     }
                                     
-                                    console.log(`Updated ${nickname}'s best score from ${existingPlayerRecord.score} to ${score}`);
+                                    console.log(`✅ Updated ${nickname}'s best score from ${existingPlayerRecord.score} to ${score}`);
                                     resolve(true);
                                 } catch (updateError) {
                                     console.error('Error updating Firebase record:', updateError);
                                     reject(updateError);
                                 }
                             } else {
-                                // Новый результат хуже или равен - не сохраняем
                                 if (uploadMessageElement) {
                                     uploadMessageElement.textContent = `ℹ️ Score ${score} not saved (best: ${existingPlayerRecord.score})`;
                                     uploadMessageElement.style.color = '#2196F3';
                                 }
                                 
-                                console.log(`Score ${score} not saved for ${nickname} (existing best: ${existingPlayerRecord.score})`);
+                                console.log(`ℹ️ Score ${score} not saved for ${nickname} (existing best: ${existingPlayerRecord.score})`);
                                 resolve(false);
                             }
                         } else {
-                            // Игрока нет - добавляем первый результат
                             await Promise.race([
                                 firebaseFunctions.push(scoresRef, scoreData),
-                                new Promise((_, reject) => setTimeout(() => reject(new Error('Add timeout')), 5000))
+                                new Promise((_, reject) => setTimeout(() => reject(new Error('Add timeout')), 8000))
                             ]);
                             
                             if (uploadMessageElement) {
@@ -401,7 +350,7 @@ document.addEventListener('DOMContentLoaded', function() {
                                 uploadMessageElement.style.color = '#4CAF50';
                             }
                             
-                            console.log(`Saved first score for ${nickname}: ${score}`);
+                            console.log(`✅ Saved first score for ${nickname}: ${score}`);
                             resolve(true);
                         }
                         
@@ -426,6 +375,16 @@ document.addEventListener('DOMContentLoaded', function() {
                 uploadMessageElement.style.color = '#f44336';
             }
             
+            // Если проблемы с Firebase, предлагаем переподключение
+            if (connectionRetryCount < maxConnectionRetries) {
+                console.log('🔄 Attempting Firebase reconnection after save failure...');
+                setTimeout(() => {
+                    if (window.reconnectFirebase) {
+                        window.reconnectFirebase();
+                    }
+                }, 2000);
+            }
+            
             return false;
         }
     }
@@ -441,14 +400,14 @@ document.addEventListener('DOMContentLoaded', function() {
             
             return new Promise((resolve, reject) => {
                 const timeout = setTimeout(() => {
-                    reject(new Error('Load timeout'));
-                }, 10000);
+                    console.warn('⏱️ Firebase load timeout, using cached data');
+                    resolve([]);
+                }, 12000);
                 
                 firebaseFunctions.onValue(sortedQuery, (snapshot) => {
                     clearTimeout(timeout);
                     const data = snapshot.val();
                     if (data) {
-                        // Фильтруем дубликаты игроков - оставляем только лучшие результаты
                         const playerBestScores = new Map();
                         
                         Object.values(data).forEach(entry => {
@@ -459,13 +418,15 @@ document.addEventListener('DOMContentLoaded', function() {
                         });
                         
                         const uniqueScores = Array.from(playerBestScores.values()).sort((a, b) => b.score - a.score);
-                        console.log(`Filtered ${uniqueScores.length} unique players from ${Object.keys(data).length} Firebase records`);
+                        console.log(`✅ Loaded ${uniqueScores.length} unique players from ${Object.keys(data).length} Firebase records`);
                         resolve(uniqueScores);
                     } else {
                         resolve([]);
                     }
-                }, {
-                    onlyOnce: true
+                }, (error) => {
+                    clearTimeout(timeout);
+                    console.error('Firebase load error:', error);
+                    resolve([]);
                 });
             });
         } catch (error) {
@@ -481,17 +442,15 @@ document.addEventListener('DOMContentLoaded', function() {
                 return;
             }
             
-            console.log('Setting up realtime leaderboard...');
+            console.log('🔗 Setting up realtime leaderboard...');
             
             const scoresRef = firebaseFunctions.ref(database, 'scores');
             const sortedQuery = firebaseFunctions.query(scoresRef, firebaseFunctions.orderByChild('score'));
             
-            // Слушаем изменения в данных
             firebaseFunctions.onValue(sortedQuery, (snapshot) => {
                 try {
                     const data = snapshot.val();
                     if (data) {
-                        // Фильтруем дубликаты игроков - оставляем только лучшие результаты
                         const playerBestScores = new Map();
                         
                         Object.values(data).forEach(entry => {
@@ -503,20 +462,16 @@ document.addEventListener('DOMContentLoaded', function() {
                         
                         leaderboard = Array.from(playerBestScores.values()).sort((a, b) => b.score - a.score);
                         
-                        // Обновляем рекорд
                         if (leaderboard.length > 0) {
                             highScore = Math.max(highScore, leaderboard[0].score);
                             highScoreElement.textContent = highScore;
                         }
                         
-                        // Обновляем отображение если лидерборд открыт
                         if (leaderboardScreenElement && leaderboardScreenElement.style.display === 'block') {
                             displayMainLeaderboard();
                         }
                         
-                        console.log(`Loaded ${leaderboard.length} unique players from ${Object.keys(data).length} Firebase records (realtime)`);
-                        
-                        // Подтверждаем что соединение работает
+                        console.log(`🔗 Realtime update: ${leaderboard.length} unique players from ${Object.keys(data).length} records`);
                         updateConnectionStatus('connected', '🟢 Connected to online leaderboard', '#4CAF50');
                     } else {
                         console.log('No data in Firebase leaderboard yet');
@@ -527,27 +482,35 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             }, (error) => {
                 console.error('Firebase realtime error:', error);
+                updateConnectionStatus('disconnected', '🟠 Realtime updates unavailable', '#ff9800', true);
                 
-                // Не отключаем Firebase полностью - возможно это временная проблема
-                updateConnectionStatus('disconnected', '🟠 Realtime updates unavailable', '#ff9800');
+                // Пробуем переподключиться
+                if (connectionRetryCount < maxConnectionRetries) {
+                    connectionRetryCount++;
+                    console.log(`🔄 Attempting reconnection ${connectionRetryCount}/${maxConnectionRetries}...`);
+                    setTimeout(() => {
+                        if (window.reconnectFirebase) {
+                            window.reconnectFirebase();
+                        }
+                    }, 5000);
+                }
             });
             
-            console.log('Realtime leaderboard setup completed');
+            console.log('✅ Realtime leaderboard setup completed');
             
         } catch (error) {
             console.error('Error setting up realtime updates:', error);
-            updateConnectionStatus('error', '🔴 Failed to setup realtime updates', '#f44336');
+            updateConnectionStatus('error', '🔴 Failed to setup realtime updates', '#f44336', true);
         }
     }
 
-    // Локальное сохранение
+    // Локальное сохранение (без изменений)
     function loadLeaderboard() {
         try {
             const savedLeaderboard = localStorage.getItem('nexusserpent_leaderboard');
             if (savedLeaderboard) {
                 const localData = JSON.parse(savedLeaderboard);
                 if (localData && localData.length > 0) {
-                    // Фильтруем дубликаты игроков - оставляем только лучшие результаты
                     const playerBestScores = new Map();
                     
                     localData.forEach(entry => {
@@ -558,33 +521,19 @@ document.addEventListener('DOMContentLoaded', function() {
                     });
                     
                     leaderboard = Array.from(playerBestScores.values()).sort((a, b) => b.score - a.score);
-                    console.log(`Loaded and filtered ${leaderboard.length} unique players from ${localData.length} local records`);
+                    console.log(`📁 Loaded and filtered ${leaderboard.length} unique players from ${localData.length} local records`);
                 }
             }
             
-            // Если нет данных, добавляем демо-результаты
             if (leaderboard.length === 0) {
                 leaderboard = [
-                    {
-                        name: "Alex",
-                        score: 150,
-                        timestamp: "12.06.24, 14:30"
-                    },
-                    {
-                        name: "Maya",
-                        score: 120,
-                        timestamp: "12.06.24, 15:45"
-                    },
-                    {
-                        name: "Sam",
-                        score: 90,
-                        timestamp: "12.06.24, 16:20"
-                    }
+                    { name: "Alex", score: 150, timestamp: "12.06.24, 14:30" },
+                    { name: "Maya", score: 120, timestamp: "12.06.24, 15:45" },
+                    { name: "Sam", score: 90, timestamp: "12.06.24, 16:20" }
                 ];
                 saveLeaderboard();
             }
             
-            // Обновляем отображение рекорда
             if (leaderboard.length > 0) {
                 const sortedLeaderboard = [...leaderboard].sort((a, b) => b.score - a.score);
                 highScore = sortedLeaderboard[0].score;
@@ -599,44 +548,13 @@ document.addEventListener('DOMContentLoaded', function() {
     function saveLeaderboard() {
         try {
             localStorage.setItem('nexusserpent_leaderboard', JSON.stringify(leaderboard));
-            console.log('Leaderboard saved to localStorage');
+            console.log('📁 Leaderboard saved to localStorage');
         } catch (error) {
             console.log('Error saving leaderboard:', error);
         }
     }
 
-    // Обновляем статус соединения
-    function updateConnectionStatus(status, message, color) {
-        if (connectionStatusElement) {
-            connectionStatusElement.innerHTML = message;
-            connectionStatusElement.style.color = color;
-        }
-        
-        // Добавляем отладочную информацию
-        const debugInfo = document.getElementById('debugInfo');
-        const envInfo = document.getElementById('envInfo');
-        const protectionInfo = document.getElementById('protectionInfo');
-        
-        if (debugInfo && envInfo && !isProduction) {
-            debugInfo.style.display = 'block';
-            envInfo.textContent = `${isProduction ? 'Production' : 'Development'} | ${window.location.hostname} | Firebase: ${status}`;
-        }
-        
-        if (protectionInfo) {
-            const protectionStatus = window.APP_PROTECTED ? 'Active ✅' : 'Inactive ❌';
-            protectionInfo.textContent = protectionStatus;
-            protectionInfo.style.color = window.APP_PROTECTED ? '#4CAF50' : '#f44336';
-        }
-        
-        console.log(`Connection status: ${status} - ${message}`);
-        
-        // Дополнительный лог для защиты
-        if (window.EXTENSION_PROTECTION_LOG) {
-            console.log('Extension protection log:', window.EXTENSION_PROTECTION_LOG);
-        }
-    }
-
-    // Графические функции
+    // Графические функции (без изменений)
     function drawCube(x, y, size, color1, color2, color3) {
         const actualX = x * gridSize;
         const actualY = y * gridSize;
@@ -743,7 +661,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
-    // Игровая логика
+    // Игровая логика (без изменений)
     function moveSnake() {
         if (gameState !== 'playing' || !gameRunning || gamePaused) return;
         if (dx === 0 && dy === 0) return;
@@ -790,11 +708,9 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     async function updateLeaderboard() {
-        // Сохраняем результат в Firebase
         const saveSuccess = await saveScoreToFirebase(playerNickname, score);
         
         if (!saveSuccess) {
-            // Fallback к localStorage если Firebase недоступен или результат не был лучшим
             console.log('Updating local leaderboard...');
             
             const gameResult = {
@@ -809,23 +725,20 @@ document.addEventListener('DOMContentLoaded', function() {
                 })
             };
             
-            // Ищем существующий результат игрока в локальном лидерборде
             const existingPlayerIndex = leaderboard.findIndex(entry => entry.name === playerNickname);
             
             if (existingPlayerIndex !== -1) {
-                // Игрок уже есть - проверяем результат
                 if (score > leaderboard[existingPlayerIndex].score) {
-                    // Новый результат лучше - заменяем
+                    const oldScore = leaderboard[existingPlayerIndex].score;
                     leaderboard[existingPlayerIndex] = gameResult;
-                    console.log(`Updated local best score for ${playerNickname}: ${leaderboard[existingPlayerIndex].score} → ${score}`);
+                    console.log(`📁 Updated local best score for ${playerNickname}: ${oldScore} → ${score}`);
                     
                     if (uploadMessageElement && !saveSuccess) {
-                        uploadMessageElement.textContent = `✅ New local best! (was ${leaderboard[existingPlayerIndex].score})`;
+                        uploadMessageElement.textContent = `✅ New local best! (was ${oldScore})`;
                         uploadMessageElement.style.color = '#4CAF50';
                     }
                 } else {
-                    // Новый результат хуже - не сохраняем
-                    console.log(`Local score ${score} not saved for ${playerNickname} (existing best: ${leaderboard[existingPlayerIndex].score})`);
+                    console.log(`📁 Local score ${score} not saved for ${playerNickname} (existing best: ${leaderboard[existingPlayerIndex].score})`);
                     
                     if (uploadMessageElement && !saveSuccess) {
                         uploadMessageElement.textContent = `ℹ️ Local score not saved (best: ${leaderboard[existingPlayerIndex].score})`;
@@ -833,9 +746,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     }
                 }
             } else {
-                // Игрока нет - добавляем первый результат
                 leaderboard.push(gameResult);
-                console.log(`Added first local score for ${playerNickname}: ${score}`);
+                console.log(`📁 Added first local score for ${playerNickname}: ${score}`);
                 
                 if (uploadMessageElement && !saveSuccess) {
                     uploadMessageElement.textContent = '✅ First local score saved!';
@@ -843,11 +755,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             }
             
-            // Сортируем лидерборд
             leaderboard.sort((a, b) => b.score - a.score);
             saveLeaderboard();
             
-            // Обновляем рекорд
             if (leaderboard.length > 0) {
                 highScore = Math.max(highScore, leaderboard[0].score);
                 highScoreElement.textContent = highScore;
@@ -857,15 +767,14 @@ document.addEventListener('DOMContentLoaded', function() {
         displayLeaderboard();
     }
 
-    // Отображение лидерборда
+    // Отображение лидерборда (без изменений, только улучшенные сообщения)
     function displayMainLeaderboard() {
         if (!mainLeaderboardListElement) return;
         
         mainLeaderboardListElement.innerHTML = '';
         
-        // Считаем статистику
-        const uniquePlayers = leaderboard.length; // Теперь каждая запись = уникальный игрок
-        if (totalGamesElement) totalGamesElement.textContent = uniquePlayers; // Показываем количество персональных рекордов
+        const uniquePlayers = leaderboard.length;
+        if (totalGamesElement) totalGamesElement.textContent = uniquePlayers;
         if (uniquePlayersElement) uniquePlayersElement.textContent = uniquePlayers;
         
         if (leaderboard.length === 0) {
@@ -878,7 +787,6 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
         
-        // Показываем все персональные рекорды
         leaderboard.forEach((entry, index) => {
             const entryDiv = document.createElement('div');
             entryDiv.className = 'leaderboard-entry';
@@ -897,7 +805,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 entryDiv.style.border = '1px solid rgba(255, 215, 0, 0.3)';
             }
             
-            // Подсвечиваем текущего игрока
             if (entry.name === playerNickname) {
                 entryDiv.style.background = 'rgba(255, 255, 255, 0.1)';
                 entryDiv.style.borderRadius = '8px';
@@ -924,7 +831,6 @@ document.addEventListener('DOMContentLoaded', function() {
         
         leaderboardListElement.innerHTML = '';
         
-        // Показываем топ-15 персональных рекордов для компактности в окне Game Over
         const topFifteen = leaderboard.slice(0, 15);
         
         if (topFifteen.length === 0) {
@@ -939,7 +845,6 @@ document.addEventListener('DOMContentLoaded', function() {
             entryDiv.style.alignItems = 'flex-start';
             entryDiv.style.padding = '8px 0';
             
-            // Подсвечиваем текущего игрока
             const isCurrentPlayer = entry.name === playerNickname;
             if (isCurrentPlayer) {
                 entryDiv.style.background = 'rgba(255, 255, 255, 0.15)';
@@ -952,7 +857,6 @@ document.addEventListener('DOMContentLoaded', function() {
             else if (index === 1) medal = '🥈';
             else if (index === 2) medal = '🥉';
             
-            // Определяем статус результата для текущего игрока
             let statusText = 'Personal Best';
             if (isCurrentPlayer) {
                 if (score > entry.score) {
@@ -978,7 +882,6 @@ document.addEventListener('DOMContentLoaded', function() {
             leaderboardListElement.appendChild(entryDiv);
         });
         
-        // Показываем информацию о том, сколько всего персональных рекордов
         if (leaderboard.length > 15) {
             const moreDiv = document.createElement('div');
             moreDiv.style.textAlign = 'center';
@@ -992,9 +895,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // UI функции
     async function showLeaderboard() {
-        console.log('Show leaderboard clicked');
+        console.log('📊 Show leaderboard clicked');
         
-        // Обновляем лидерборд перед показом
         if (firebaseReady) {
             const freshData = await loadLeaderboardFromFirebase();
             if (freshData.length > 0) {
@@ -1008,23 +910,19 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function backToMenu() {
-        console.log('Back to menu clicked');
+        console.log('🔙 Back to menu clicked');
         leaderboardScreenElement.style.display = 'none';
         startScreenElement.style.display = 'block';
     }
 
     function startGame() {
-        console.log('Start game clicked');
+        console.log('🎮 Start game clicked');
         
-        // Инициализируем аудио при первом взаимодействии пользователя
-        if (!audioInitialized) {
-            initializeAudio();
-        }
+        if (!audioInitialized) initializeAudio();
         
-        // Возобновляем аудио контекст если он приостановлен
         if (audioContext && audioContext.state === 'suspended') {
             audioContext.resume().then(() => {
-                console.log('Audio context resumed');
+                console.log('🔊 Audio context resumed');
             }).catch((error) => {
                 console.log('Error resuming audio context:', error);
             });
@@ -1052,7 +950,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function restartGame() {
-        console.log('Restart game clicked');
+        console.log('🔄 Restart game clicked');
         gameState = 'start';
         gameRunning = false;
         gamePaused = false;
@@ -1074,25 +972,21 @@ document.addEventListener('DOMContentLoaded', function() {
         drawGame();
     }
 
-    // Инициализация Firebase и игры
+    // УЛУЧШЕННАЯ ИНИЦИАЛИЗАЦИЯ ИГРЫ
     async function initializeGame() {
+        console.log('🚀 Initializing game...');
+        
         // Сначала загружаем локальные данные
         loadLeaderboard();
         
-        updateConnectionStatus('connecting', '🔄 Connecting to online leaderboard...', '#888');
+        updateConnectionStatus('connecting', '🔄 Connecting to online leaderboard...', '#2196F3');
         
         try {
-            console.log('Waiting for Firebase initialization...');
+            console.log('⏳ Waiting for Firebase initialization...');
             
-            // Увеличиваем таймаут для GitHub Pages
-            const timeoutMs = isProduction ? 30000 : 15000;
+            const firebaseDetails = await waitForFirebase();
             
-            await Promise.race([
-                waitForFirebase(),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('Firebase timeout')), timeoutMs))
-            ]);
-            
-            console.log('Firebase ready event received');
+            console.log('🔥 Firebase ready event received');
             
             // Получаем Firebase объекты
             database = window.firebaseDB;
@@ -1104,40 +998,35 @@ document.addEventListener('DOMContentLoaded', function() {
             
             firebaseReady = true;
             
-            // Пробуем загрузить данные - это более надежный тест чем .info/connected
-            console.log('Testing Firebase with actual data load...');
+            console.log('🧪 Testing Firebase with actual data load...');
             
             try {
                 const initialData = await loadLeaderboardFromFirebase();
-                console.log(`Successfully loaded ${initialData.length} scores from Firebase`);
+                console.log(`✅ Successfully loaded ${initialData.length} scores from Firebase`);
                 
                 if (initialData.length > 0) {
                     leaderboard = initialData;
                     
-                    // Обновляем рекорд
                     if (leaderboard.length > 0) {
                         highScore = Math.max(highScore, leaderboard[0].score);
                         highScoreElement.textContent = highScore;
                     }
                 }
                 
-                // Настраиваем real-time обновления
                 setupRealtimeLeaderboard();
                 
                 updateConnectionStatus('connected', '🟢 Connected to online leaderboard', '#4CAF50');
-                console.log('Firebase connection confirmed by data load');
+                console.log('✅ Firebase connection confirmed by data load');
                 
             } catch (loadError) {
-                console.warn('Could not load initial data, but Firebase may still work:', loadError);
+                console.warn('⚠️ Could not load initial data, but Firebase may still work:', loadError);
                 
-                // Все равно пробуем настроить real-time обновления
                 setupRealtimeLeaderboard();
-                
                 updateConnectionStatus('partial', '🟡 Partial connection (writes may work)', '#ff9800');
             }
             
         } catch (error) {
-            console.error('Firebase initialization failed:', error);
+            console.error('❌ Firebase initialization failed:', error);
             firebaseReady = false;
             
             let errorMessage = '🔴 Offline mode (local scores only)';
@@ -1148,7 +1037,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 errorMessage = '🚫 Connection blocked (using local scores)';
             }
             
-            updateConnectionStatus('failed', errorMessage, '#f44336');
+            updateConnectionStatus('failed', errorMessage, '#f44336', true);
         }
         
         // Инициализируем игру независимо от Firebase
@@ -1158,6 +1047,8 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         
         setInterval(gameLoop, 150);
+        
+        console.log('🎮 Game initialization completed');
     }
 
     // Event listeners
@@ -1166,38 +1057,39 @@ document.addEventListener('DOMContentLoaded', function() {
     const viewLeaderboardBtn = document.getElementById('viewLeaderboardBtn');
     const backToMenuBtn = document.getElementById('backToMenuBtn');
     const refreshLeaderboardBtn = document.getElementById('refreshLeaderboardBtn');
+    const forceReconnectBtn = document.getElementById('forceReconnectBtn');
 
     if (startBtn) {
         startBtn.addEventListener('click', () => {
-            initializeAudio(); // Инициализируем аудио при клике
+            initializeAudio();
             startGame();
         });
     }
 
     if (restartBtn) {
         restartBtn.addEventListener('click', () => {
-            initializeAudio(); // Инициализируем аудио при клике
+            initializeAudio();
             restartGame();
         });
     }
 
     if (viewLeaderboardBtn) {
         viewLeaderboardBtn.addEventListener('click', () => {
-            initializeAudio(); // Инициализируем аудио при клике
+            initializeAudio();
             showLeaderboard();
         });
     }
 
     if (backToMenuBtn) {
         backToMenuBtn.addEventListener('click', () => {
-            initializeAudio(); // Инициализируем аудио при клике
+            initializeAudio();
             backToMenu();
         });
     }
 
     if (refreshLeaderboardBtn) {
         refreshLeaderboardBtn.addEventListener('click', async function() {
-            initializeAudio(); // Инициализируем аудио при клике
+            initializeAudio();
             
             this.innerHTML = '🔄 Loading...';
             this.disabled = true;
@@ -1215,10 +1107,26 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
+    if (forceReconnectBtn) {
+        forceReconnectBtn.addEventListener('click', async function() {
+            initializeAudio();
+            
+            this.innerHTML = '🔄 Reconnecting...';
+            this.disabled = true;
+            
+            if (window.reconnectFirebase) {
+                await window.reconnectFirebase();
+            }
+            
+            this.innerHTML = '🔄 RECONNECT';
+            this.disabled = false;
+        });
+    }
+
     if (nicknameInputElement) {
         nicknameInputElement.addEventListener('keydown', (e) => {
             if (e.code === 'Enter') {
-                initializeAudio(); // Инициализируем аудио при Enter
+                initializeAudio();
                 startGame();
             }
         });
@@ -1239,163 +1147,77 @@ document.addEventListener('DOMContentLoaded', function() {
         switch(e.code) {
             case 'ArrowUp':
             case 'KeyW':
-                if (dy !== 1) {
-                    dx = 0;
-                    dy = -1;
-                }
+                if (dy !== 1) { dx = 0; dy = -1; }
                 break;
             case 'ArrowDown':
             case 'KeyS':
-                if (dy !== -1) {
-                    dx = 0;
-                    dy = 1;
-                }
+                if (dy !== -1) { dx = 0; dy = 1; }
                 break;
             case 'ArrowLeft':
             case 'KeyA':
-                if (dx !== 1) {
-                    dx = -1;
-                    dy = 0;
-                }
+                if (dx !== 1) { dx = -1; dy = 0; }
                 break;
             case 'ArrowRight':
             case 'KeyD':
-                if (dx !== -1) {
-                    dx = 1;
-                    dy = 0;
-                }
+                if (dx !== -1) { dx = 1; dy = 0; }
                 break;
         }
     });
 
     // Слушаем события Firebase
     window.addEventListener('firebaseReady', (event) => {
-        console.log('Firebase ready event received in main script');
+        console.log('🔥 Firebase ready event received in main script');
     });
 
     window.addEventListener('firebaseError', (event) => {
-        console.error('Firebase error event:', event.detail);
+        console.error('❌ Firebase error event:', event.detail);
         firebaseReady = false;
-        updateConnectionStatus('error', '🔴 Firebase connection failed', '#f44336');
+        updateConnectionStatus('error', '🔴 Firebase connection failed', '#f44336', true);
     });
 
+    // Глобальные функции для игры
+    window.initializeGame = initializeGame;
+    
     // Запускаем инициализацию
     initializeGame();
     
-    // Глобальные функции для отладки
+    // РАСШИРЕННЫЕ ОТЛАДОЧНЫЕ ФУНКЦИИ
     window.debugGameStatus = function() {
-        console.log('🎮 Game Debug Status:', {
-            gameState,
-            gameRunning,
-            score,
-            playerNickname,
-            isProduction,
-            isLocalhost,
-            firebaseReady,
-            leaderboardLength: leaderboard.length,
-            uniquePlayersCount: leaderboard.length,
-            protectionActive: window.APP_PROTECTED,
+        console.log('🎮 Enhanced Game Debug Status:', {
+            gameState, gameRunning, score, playerNickname, isProduction, isLocalhost,
+            firebaseReady, leaderboardLength: leaderboard.length,
+            uniquePlayersCount: leaderboard.length, protectionActive: window.APP_PROTECTED,
             extensionErrorsSuppressed: window.EXTENSION_ERRORS_SUPPRESSED,
-            personalBestSystem: 'enabled'
+            personalBestSystem: 'enabled', connectionRetryCount, maxConnectionRetries,
+            audioInitialized, firebaseConnectionTime: window.firebaseFunctions?.connectionTime || 'unknown'
         });
         
-        // Показываем персональные рекорды текущего игрока
         if (playerNickname) {
             const currentPlayerRecord = leaderboard.find(entry => entry.name === playerNickname);
             console.log(`📊 ${playerNickname}'s record:`, currentPlayerRecord || 'No record yet');
         }
     };
     
-    window.debugPersonalBestSystem = function() {
-        console.log('🏆 Personal Best System Info:', {
-            enabled: true,
-            description: 'Each player can have only one record - their best score',
-            totalRecords: leaderboard.length,
-            uniquePlayers: leaderboard.length,
-            recordsPreview: leaderboard.slice(0, 5).map(entry => ({
-                name: entry.name,
-                score: entry.score,
-                timestamp: entry.timestamp
-            }))
-        });
-        
-        // Проверяем дубликаты (их не должно быть)
-        const nameCount = {};
-        leaderboard.forEach(entry => {
-            nameCount[entry.name] = (nameCount[entry.name] || 0) + 1;
-        });
-        
-        const duplicates = Object.entries(nameCount).filter(([name, count]) => count > 1);
-        console.log('🔍 Duplicate check:', duplicates.length === 0 ? 'No duplicates found ✅' : 'Duplicates detected ❌', duplicates);
-    };
-    
-    window.debugFirebaseConnection = function() {
-        if (firebaseReady && database) {
-            console.log('🔥 Testing Firebase connection...');
-            
-            // Тест записи
-            const testRef = firebaseFunctions.ref(database, 'debug_test');
-            firebaseFunctions.push(testRef, {
-                test: 'personal_best_system',
-                timestamp: Date.now(),
-                url: window.location.href
-            }).then(() => {
-                console.log('✅ Firebase write test successful');
-                updateConnectionStatus('connected', '🟢 Connection confirmed by test write', '#4CAF50');
-            }).catch((error) => {
-                console.log('❌ Firebase write test failed:', error);
-                updateConnectionStatus('readonly', '🟡 Read-only connection detected', '#ff9800');
-            });
-            
-            // Тест чтения
-            const scoresRef = firebaseFunctions.ref(database, 'scores');
-            firebaseFunctions.onValue(scoresRef, (snapshot) => {
-                const data = snapshot.val();
-                const totalRecords = data ? Object.keys(data).length : 0;
-                const uniquePlayers = data ? [...new Set(Object.values(data).map(entry => entry.name))].length : 0;
-                
-                console.log('✅ Firebase read test result:', {
-                    totalRecords,
-                    uniquePlayers,
-                    personalBestFiltering: totalRecords > uniquePlayers ? 'needed' : 'not needed'
-                });
-            }, {
-                onlyOnce: true
-            });
-        } else {
-            console.log('❌ Firebase not ready for testing');
-            console.log('Debug info:', {
-                firebaseReady,
-                database: !!database,
-                firebaseFunctions: !!firebaseFunctions,
-                windowFirebaseDB: !!window.firebaseDB,
-                windowFirebaseReady: !!window.firebaseReady
-            });
-        }
-    };
-    
-    window.debugExtensionProtection = function() {
-        console.log('🛡️ Extension Protection Status:', {
-            appProtected: window.APP_PROTECTED,
-            errorsSuppressed: window.EXTENSION_ERRORS_SUPPRESSED,
-            ethereumExists: typeof window.ethereum !== 'undefined',
-            protectionLog: window.EXTENSION_PROTECTION_LOG || [],
-            userAgent: navigator.userAgent,
-            extensionScripts: Array.from(document.querySelectorAll('script')).filter(s => 
-                s.src && (s.src.includes('extension://') || s.src.includes('moz-extension://'))
-            ).length
+    window.debugConnectionIssues = function() {
+        console.log('🔍 Connection Troubleshooting:', {
+            firebaseReady, database: !!database, firebaseFunctions: !!firebaseFunctions,
+            windowFirebaseDB: !!window.firebaseDB, windowFirebaseReady: !!window.firebaseReady,
+            connectionRetryCount, maxConnectionRetries,
+            lastConnectionCheck: localStorage.getItem('nexus_last_connection_check'),
+            lastSuccessfulConnection: localStorage.getItem('nexus_last_successful_connection'),
+            browserInfo: window.firebaseDebug,
+            networkInfo: navigator.connection ? {
+                effectiveType: navigator.connection.effectiveType,
+                downlink: navigator.connection.downlink,
+                rtt: navigator.connection.rtt
+            } : 'unavailable'
         });
     };
     
-    // Автоматическая отладка через 5 секунд после загрузки
-    setTimeout(() => {
-        if (!isProduction) {
-            console.log('📊 Automatic debug report:');
-            window.debugGameStatus();
-            window.debugPersonalBestSystem();
-            window.debugExtensionProtection();
-            window.debugFirebaseConnection();
-        }
-    }, 5000);
+    console.log('🎮 Game loaded successfully! Debug functions available:');
+    console.log('- window.debugGameStatus() - General game status');
+    console.log('- window.debugConnectionIssues() - Connection troubleshooting');
+    console.log('- window.reconnectFirebase() - Force reconnection');
+    console.log('- window.clearGameCache() - Clear cache and reload');
     
 });
