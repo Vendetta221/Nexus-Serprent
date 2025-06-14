@@ -192,16 +192,30 @@ document.addEventListener('DOMContentLoaded', function() {
     let database = null;
     let firebaseFunctions = null;
 
-    // Создаем аудио контекст для звуков
+    // Создаем аудио контекст для звуков (только после взаимодействия)
     let audioContext;
-    try {
-        audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    } catch (e) {
-        console.log('Web Audio API not supported');
+    let audioInitialized = false;
+    
+    // Функция для инициализации аудио после взаимодействия пользователя
+    function initializeAudio() {
+        if (audioInitialized) return;
+        
+        try {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            audioInitialized = true;
+            console.log('✅ Audio context initialized');
+        } catch (e) {
+            console.log('⚠️ Web Audio API not supported');
+        }
     }
 
     // Функция для создания звука "дзынь"
     function playEatSound() {
+        // Инициализируем аудио при первом воспроизведении
+        if (!audioInitialized) {
+            initializeAudio();
+        }
+        
         if (!audioContext) return;
         
         try {
@@ -399,28 +413,18 @@ document.addEventListener('DOMContentLoaded', function() {
                         
                         // Подтверждаем что соединение работает
                         updateConnectionStatus('connected', '🟢 Connected to online leaderboard', '#4CAF50');
+                    } else {
+                        console.log('No data in Firebase leaderboard yet');
+                        updateConnectionStatus('connected', '🟢 Connected (no data yet)', '#4CAF50');
                     }
                 } catch (error) {
                     console.error('Error processing realtime update:', error);
                 }
             }, (error) => {
                 console.error('Firebase realtime error:', error);
-                firebaseReady = false;
                 
-                updateConnectionStatus('disconnected', '🔴 Connection lost, using local scores', '#f44336');
-            });
-            
-            // Отдельно слушаем статус подключения
-            const connectedRef = firebaseFunctions.ref(database, '.info/connected');
-            firebaseFunctions.onValue(connectedRef, (snapshot) => {
-                const connected = snapshot.val();
-                console.log('Firebase .info/connected status:', connected);
-                
-                if (connected === true) {
-                    updateConnectionStatus('connected', '🟢 Connected to online leaderboard', '#4CAF50');
-                } else {
-                    updateConnectionStatus('disconnected', '🟠 Reconnecting to online leaderboard...', '#ff9800');
-                }
+                // Не отключаем Firebase полностью - возможно это временная проблема
+                updateConnectionStatus('disconnected', '🟠 Realtime updates unavailable', '#ff9800');
             });
             
             console.log('Realtime leaderboard setup completed');
@@ -817,9 +821,17 @@ document.addEventListener('DOMContentLoaded', function() {
     function startGame() {
         console.log('Start game clicked');
         
+        // Инициализируем аудио при первом взаимодействии пользователя
+        if (!audioInitialized) {
+            initializeAudio();
+        }
+        
+        // Возобновляем аудио контекст если он приостановлен
         if (audioContext && audioContext.state === 'suspended') {
             audioContext.resume().then(() => {
                 console.log('Audio context resumed');
+            }).catch((error) => {
+                console.log('Error resuming audio context:', error);
             });
         }
         
@@ -875,23 +887,37 @@ document.addEventListener('DOMContentLoaded', function() {
     const refreshLeaderboardBtn = document.getElementById('refreshLeaderboardBtn');
 
     if (startBtn) {
-        startBtn.addEventListener('click', startGame);
+        startBtn.addEventListener('click', () => {
+            initializeAudio(); // Инициализируем аудио при клике
+            startGame();
+        });
     }
 
     if (restartBtn) {
-        restartBtn.addEventListener('click', restartGame);
+        restartBtn.addEventListener('click', () => {
+            initializeAudio(); // Инициализируем аудио при клике
+            restartGame();
+        });
     }
 
     if (viewLeaderboardBtn) {
-        viewLeaderboardBtn.addEventListener('click', showLeaderboard);
+        viewLeaderboardBtn.addEventListener('click', () => {
+            initializeAudio(); // Инициализируем аудио при клике
+            showLeaderboard();
+        });
     }
 
     if (backToMenuBtn) {
-        backToMenuBtn.addEventListener('click', backToMenu);
+        backToMenuBtn.addEventListener('click', () => {
+            initializeAudio(); // Инициализируем аудио при клике
+            backToMenu();
+        });
     }
 
     if (refreshLeaderboardBtn) {
         refreshLeaderboardBtn.addEventListener('click', async function() {
+            initializeAudio(); // Инициализируем аудио при клике
+            
             this.innerHTML = '🔄 Loading...';
             this.disabled = true;
             
@@ -911,6 +937,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (nicknameInputElement) {
         nicknameInputElement.addEventListener('keydown', (e) => {
             if (e.code === 'Enter') {
+                initializeAudio(); // Инициализируем аудио при Enter
                 startGame();
             }
         });
@@ -1025,50 +1052,37 @@ document.addEventListener('DOMContentLoaded', function() {
             
             firebaseReady = true;
             
-            // Дополнительная проверка соединения
-            await new Promise((resolve, reject) => {
-                const timeout = setTimeout(() => reject(new Error('Connection test timeout')), 10000);
-                
-                try {
-                    const connectedRef = firebaseFunctions.ref(database, '.info/connected');
-                    firebaseFunctions.onValue(connectedRef, (snapshot) => {
-                        clearTimeout(timeout);
-                        const connected = snapshot.val();
-                        console.log('Firebase connection test result:', connected);
-                        
-                        if (connected === true) {
-                            resolve(true);
-                        } else {
-                            reject(new Error('Firebase not connected'));
-                        }
-                    }, {
-                        onlyOnce: true
-                    });
-                } catch (error) {
-                    clearTimeout(timeout);
-                    reject(error);
-                }
-            });
+            // Пробуем загрузить данные - это более надежный тест чем .info/connected
+            console.log('Testing Firebase with actual data load...');
             
-            console.log('Firebase connection verified');
-            
-            // Загружаем начальные данные из Firebase
-            const initialData = await loadLeaderboardFromFirebase();
-            if (initialData.length > 0) {
-                leaderboard = initialData;
+            try {
+                const initialData = await loadLeaderboardFromFirebase();
+                console.log(`Successfully loaded ${initialData.length} scores from Firebase`);
                 
-                // Обновляем рекорд
-                if (leaderboard.length > 0) {
-                    highScore = Math.max(highScore, leaderboard[0].score);
-                    highScoreElement.textContent = highScore;
+                if (initialData.length > 0) {
+                    leaderboard = initialData;
+                    
+                    // Обновляем рекорд
+                    if (leaderboard.length > 0) {
+                        highScore = Math.max(highScore, leaderboard[0].score);
+                        highScoreElement.textContent = highScore;
+                    }
                 }
+                
+                // Настраиваем real-time обновления
+                setupRealtimeLeaderboard();
+                
+                updateConnectionStatus('connected', '🟢 Connected to online leaderboard', '#4CAF50');
+                console.log('Firebase connection confirmed by data load');
+                
+            } catch (loadError) {
+                console.warn('Could not load initial data, but Firebase may still work:', loadError);
+                
+                // Все равно пробуем настроить real-time обновления
+                setupRealtimeLeaderboard();
+                
+                updateConnectionStatus('partial', '🟡 Partial connection (writes may work)', '#ff9800');
             }
-            
-            // Настраиваем real-time обновления
-            setupRealtimeLeaderboard();
-            
-            updateConnectionStatus('connected', '🟢 Connected to online leaderboard', '#4CAF50');
-            console.log('Game initialized with Firebase successfully');
             
         } catch (error) {
             console.error('Firebase initialization failed:', error);
