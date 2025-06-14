@@ -254,6 +254,10 @@ document.addEventListener('DOMContentLoaded', function() {
     let playerNickname = '';
     let leaderboard = [];
 
+    // Детектируем окружение
+    const isProduction = window.location.hostname.includes('github.io');
+    const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+
     // Адаптивный размер канваса
     function resizeCanvas() {
         const maxWidth = Math.min(500, window.innerWidth * 0.9);
@@ -306,30 +310,110 @@ document.addEventListener('DOMContentLoaded', function() {
                 return false;
             }
             
-            const scoreData = {
-                name: nickname,
-                score: score,
-                timestamp: new Date().toLocaleString('en-US', {
-                    day: '2-digit',
-                    month: '2-digit',
-                    year: '2-digit',
-                    hour: '2-digit',
-                    minute: '2-digit'
-                })
-            };
+            console.log(`Attempting to save score for ${nickname}: ${score}`);
             
+            // Сначала ищем существующий результат этого игрока
             const scoresRef = firebaseFunctions.ref(database, 'scores');
-            await Promise.race([
-                firebaseFunctions.push(scoresRef, scoreData),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('Save timeout')), 10000))
-            ]);
             
-            if (uploadMessageElement) {
-                uploadMessageElement.textContent = '✅ Score saved online!';
-                uploadMessageElement.style.color = '#4CAF50';
-            }
+            return new Promise((resolve, reject) => {
+                const timeout = setTimeout(() => {
+                    reject(new Error('Save timeout'));
+                }, 15000);
+                
+                // Получаем все результаты
+                firebaseFunctions.onValue(scoresRef, async (snapshot) => {
+                    try {
+                        clearTimeout(timeout);
+                        const data = snapshot.val();
+                        let existingPlayerRecord = null;
+                        let existingPlayerKey = null;
+                        
+                        // Ищем существующий результат игрока
+                        if (data) {
+                            for (const [key, record] of Object.entries(data)) {
+                                if (record.name === nickname) {
+                                    existingPlayerRecord = record;
+                                    existingPlayerKey = key;
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        const scoreData = {
+                            name: nickname,
+                            score: score,
+                            timestamp: new Date().toLocaleString('en-US', {
+                                day: '2-digit',
+                                month: '2-digit',
+                                year: '2-digit',
+                                hour: '2-digit',
+                                minute: '2-digit'
+                            })
+                        };
+                        
+                        if (existingPlayerRecord) {
+                            if (score > existingPlayerRecord.score) {
+                                // Новый результат лучше - удаляем старую запись и создаем новую
+                                try {
+                                    // Удаляем старую запись
+                                    const oldRecordRef = firebaseFunctions.ref(database, `scores/${existingPlayerKey}`);
+                                    await Promise.race([
+                                        firebaseFunctions.remove(oldRecordRef),
+                                        new Promise((_, reject) => setTimeout(() => reject(new Error('Delete timeout')), 5000))
+                                    ]);
+                                    
+                                    // Добавляем новую запись
+                                    await Promise.race([
+                                        firebaseFunctions.push(scoresRef, scoreData),
+                                        new Promise((_, reject) => setTimeout(() => reject(new Error('Add timeout')), 5000))
+                                    ]);
+                                    
+                                    if (uploadMessageElement) {
+                                        uploadMessageElement.textContent = `✅ New best score saved! (was ${existingPlayerRecord.score})`;
+                                        uploadMessageElement.style.color = '#4CAF50';
+                                    }
+                                    
+                                    console.log(`Updated ${nickname}'s best score from ${existingPlayerRecord.score} to ${score}`);
+                                    resolve(true);
+                                } catch (updateError) {
+                                    console.error('Error updating Firebase record:', updateError);
+                                    reject(updateError);
+                                }
+                            } else {
+                                // Новый результат хуже или равен - не сохраняем
+                                if (uploadMessageElement) {
+                                    uploadMessageElement.textContent = `ℹ️ Score ${score} not saved (best: ${existingPlayerRecord.score})`;
+                                    uploadMessageElement.style.color = '#2196F3';
+                                }
+                                
+                                console.log(`Score ${score} not saved for ${nickname} (existing best: ${existingPlayerRecord.score})`);
+                                resolve(false);
+                            }
+                        } else {
+                            // Игрока нет - добавляем первый результат
+                            await Promise.race([
+                                firebaseFunctions.push(scoresRef, scoreData),
+                                new Promise((_, reject) => setTimeout(() => reject(new Error('Add timeout')), 5000))
+                            ]);
+                            
+                            if (uploadMessageElement) {
+                                uploadMessageElement.textContent = '✅ First score saved!';
+                                uploadMessageElement.style.color = '#4CAF50';
+                            }
+                            
+                            console.log(`Saved first score for ${nickname}: ${score}`);
+                            resolve(true);
+                        }
+                        
+                    } catch (error) {
+                        clearTimeout(timeout);
+                        reject(error);
+                    }
+                }, {
+                    onlyOnce: true
+                });
+            });
             
-            return true;
         } catch (error) {
             console.error('Error saving to Firebase:', error);
             
@@ -364,8 +448,19 @@ document.addEventListener('DOMContentLoaded', function() {
                     clearTimeout(timeout);
                     const data = snapshot.val();
                     if (data) {
-                        const scores = Object.values(data).sort((a, b) => b.score - a.score);
-                        resolve(scores);
+                        // Фильтруем дубликаты игроков - оставляем только лучшие результаты
+                        const playerBestScores = new Map();
+                        
+                        Object.values(data).forEach(entry => {
+                            const existingScore = playerBestScores.get(entry.name);
+                            if (!existingScore || entry.score > existingScore.score) {
+                                playerBestScores.set(entry.name, entry);
+                            }
+                        });
+                        
+                        const uniqueScores = Array.from(playerBestScores.values()).sort((a, b) => b.score - a.score);
+                        console.log(`Filtered ${uniqueScores.length} unique players from ${Object.keys(data).length} Firebase records`);
+                        resolve(uniqueScores);
                     } else {
                         resolve([]);
                     }
@@ -396,7 +491,17 @@ document.addEventListener('DOMContentLoaded', function() {
                 try {
                     const data = snapshot.val();
                     if (data) {
-                        leaderboard = Object.values(data).sort((a, b) => b.score - a.score);
+                        // Фильтруем дубликаты игроков - оставляем только лучшие результаты
+                        const playerBestScores = new Map();
+                        
+                        Object.values(data).forEach(entry => {
+                            const existingScore = playerBestScores.get(entry.name);
+                            if (!existingScore || entry.score > existingScore.score) {
+                                playerBestScores.set(entry.name, entry);
+                            }
+                        });
+                        
+                        leaderboard = Array.from(playerBestScores.values()).sort((a, b) => b.score - a.score);
                         
                         // Обновляем рекорд
                         if (leaderboard.length > 0) {
@@ -409,7 +514,7 @@ document.addEventListener('DOMContentLoaded', function() {
                             displayMainLeaderboard();
                         }
                         
-                        console.log(`Loaded ${leaderboard.length} scores from Firebase (realtime)`);
+                        console.log(`Loaded ${leaderboard.length} unique players from ${Object.keys(data).length} Firebase records (realtime)`);
                         
                         // Подтверждаем что соединение работает
                         updateConnectionStatus('connected', '🟢 Connected to online leaderboard', '#4CAF50');
@@ -442,8 +547,18 @@ document.addEventListener('DOMContentLoaded', function() {
             if (savedLeaderboard) {
                 const localData = JSON.parse(savedLeaderboard);
                 if (localData && localData.length > 0) {
-                    leaderboard = localData;
-                    console.log(`Loaded ${leaderboard.length} local results`);
+                    // Фильтруем дубликаты игроков - оставляем только лучшие результаты
+                    const playerBestScores = new Map();
+                    
+                    localData.forEach(entry => {
+                        const existingScore = playerBestScores.get(entry.name);
+                        if (!existingScore || entry.score > existingScore.score) {
+                            playerBestScores.set(entry.name, entry);
+                        }
+                    });
+                    
+                    leaderboard = Array.from(playerBestScores.values()).sort((a, b) => b.score - a.score);
+                    console.log(`Loaded and filtered ${leaderboard.length} unique players from ${localData.length} local records`);
                 }
             }
             
@@ -461,7 +576,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         timestamp: "12.06.24, 15:45"
                     },
                     {
-                        name: "Alex",
+                        name: "Sam",
                         score: 90,
                         timestamp: "12.06.24, 16:20"
                     }
@@ -487,6 +602,37 @@ document.addEventListener('DOMContentLoaded', function() {
             console.log('Leaderboard saved to localStorage');
         } catch (error) {
             console.log('Error saving leaderboard:', error);
+        }
+    }
+
+    // Обновляем статус соединения
+    function updateConnectionStatus(status, message, color) {
+        if (connectionStatusElement) {
+            connectionStatusElement.innerHTML = message;
+            connectionStatusElement.style.color = color;
+        }
+        
+        // Добавляем отладочную информацию
+        const debugInfo = document.getElementById('debugInfo');
+        const envInfo = document.getElementById('envInfo');
+        const protectionInfo = document.getElementById('protectionInfo');
+        
+        if (debugInfo && envInfo && !isProduction) {
+            debugInfo.style.display = 'block';
+            envInfo.textContent = `${isProduction ? 'Production' : 'Development'} | ${window.location.hostname} | Firebase: ${status}`;
+        }
+        
+        if (protectionInfo) {
+            const protectionStatus = window.APP_PROTECTED ? 'Active ✅' : 'Inactive ❌';
+            protectionInfo.textContent = protectionStatus;
+            protectionInfo.style.color = window.APP_PROTECTED ? '#4CAF50' : '#f44336';
+        }
+        
+        console.log(`Connection status: ${status} - ${message}`);
+        
+        // Дополнительный лог для защиты
+        if (window.EXTENSION_PROTECTION_LOG) {
+            console.log('Extension protection log:', window.EXTENSION_PROTECTION_LOG);
         }
     }
 
@@ -648,8 +794,9 @@ document.addEventListener('DOMContentLoaded', function() {
         const saveSuccess = await saveScoreToFirebase(playerNickname, score);
         
         if (!saveSuccess) {
-            // Fallback к localStorage если Firebase недоступен
-            console.log('Falling back to localStorage');
+            // Fallback к localStorage если Firebase недоступен или результат не был лучшим
+            console.log('Updating local leaderboard...');
+            
             const gameResult = {
                 name: playerNickname,
                 score: score,
@@ -662,10 +809,45 @@ document.addEventListener('DOMContentLoaded', function() {
                 })
             };
             
-            leaderboard.push(gameResult);
+            // Ищем существующий результат игрока в локальном лидерборде
+            const existingPlayerIndex = leaderboard.findIndex(entry => entry.name === playerNickname);
+            
+            if (existingPlayerIndex !== -1) {
+                // Игрок уже есть - проверяем результат
+                if (score > leaderboard[existingPlayerIndex].score) {
+                    // Новый результат лучше - заменяем
+                    leaderboard[existingPlayerIndex] = gameResult;
+                    console.log(`Updated local best score for ${playerNickname}: ${leaderboard[existingPlayerIndex].score} → ${score}`);
+                    
+                    if (uploadMessageElement && !saveSuccess) {
+                        uploadMessageElement.textContent = `✅ New local best! (was ${leaderboard[existingPlayerIndex].score})`;
+                        uploadMessageElement.style.color = '#4CAF50';
+                    }
+                } else {
+                    // Новый результат хуже - не сохраняем
+                    console.log(`Local score ${score} not saved for ${playerNickname} (existing best: ${leaderboard[existingPlayerIndex].score})`);
+                    
+                    if (uploadMessageElement && !saveSuccess) {
+                        uploadMessageElement.textContent = `ℹ️ Local score not saved (best: ${leaderboard[existingPlayerIndex].score})`;
+                        uploadMessageElement.style.color = '#2196F3';
+                    }
+                }
+            } else {
+                // Игрока нет - добавляем первый результат
+                leaderboard.push(gameResult);
+                console.log(`Added first local score for ${playerNickname}: ${score}`);
+                
+                if (uploadMessageElement && !saveSuccess) {
+                    uploadMessageElement.textContent = '✅ First local score saved!';
+                    uploadMessageElement.style.color = '#4CAF50';
+                }
+            }
+            
+            // Сортируем лидерборд
             leaderboard.sort((a, b) => b.score - a.score);
             saveLeaderboard();
             
+            // Обновляем рекорд
             if (leaderboard.length > 0) {
                 highScore = Math.max(highScore, leaderboard[0].score);
                 highScoreElement.textContent = highScore;
@@ -681,22 +863,22 @@ document.addEventListener('DOMContentLoaded', function() {
         
         mainLeaderboardListElement.innerHTML = '';
         
-        // Считаем уникальных игроков
-        const uniquePlayers = [...new Set(leaderboard.map(entry => entry.name))];
-        if (totalGamesElement) totalGamesElement.textContent = leaderboard.length;
-        if (uniquePlayersElement) uniquePlayersElement.textContent = uniquePlayers.length;
+        // Считаем статистику
+        const uniquePlayers = leaderboard.length; // Теперь каждая запись = уникальный игрок
+        if (totalGamesElement) totalGamesElement.textContent = uniquePlayers; // Показываем количество персональных рекордов
+        if (uniquePlayersElement) uniquePlayersElement.textContent = uniquePlayers;
         
         if (leaderboard.length === 0) {
             mainLeaderboardListElement.innerHTML = `
                 <div style="text-align: center; color: #888888; padding: 20px;">
-                    ${firebaseReady ? 'No scores yet' : 'Loading scores...'}<br><br>
-                    ${firebaseReady ? 'Be the first to play!' : 'Please wait...'}
+                    ${firebaseReady ? 'No records yet' : 'Loading records...'}<br><br>
+                    ${firebaseReady ? 'Be the first to set a record!' : 'Please wait...'}
                 </div>
             `;
             return;
         }
         
-        // Показываем все результаты
+        // Показываем все персональные рекорды
         leaderboard.forEach((entry, index) => {
             const entryDiv = document.createElement('div');
             entryDiv.className = 'leaderboard-entry';
@@ -729,7 +911,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     <span class="leaderboard-score">${entry.score} pts</span>
                 </div>
                 <div style="font-size: 11px; color: #888888; margin-top: 3px;">
-                    ${entry.timestamp || 'Unknown time'}
+                    Personal Best • ${entry.timestamp || 'Unknown time'}
                 </div>
             `;
             
@@ -742,7 +924,7 @@ document.addEventListener('DOMContentLoaded', function() {
         
         leaderboardListElement.innerHTML = '';
         
-        // Показываем топ-15 для компактности в окне Game Over
+        // Показываем топ-15 персональных рекордов для компактности в окне Game Over
         const topFifteen = leaderboard.slice(0, 15);
         
         if (topFifteen.length === 0) {
@@ -757,8 +939,9 @@ document.addEventListener('DOMContentLoaded', function() {
             entryDiv.style.alignItems = 'flex-start';
             entryDiv.style.padding = '8px 0';
             
-            // Подсвечиваем текущего игрока и его последний результат
-            if (entry.name === playerNickname && entry.score === score) {
+            // Подсвечиваем текущего игрока
+            const isCurrentPlayer = entry.name === playerNickname;
+            if (isCurrentPlayer) {
                 entryDiv.style.background = 'rgba(255, 255, 255, 0.15)';
                 entryDiv.style.borderRadius = '8px';
                 entryDiv.style.border = '1px solid rgba(255, 255, 255, 0.4)';
@@ -769,6 +952,18 @@ document.addEventListener('DOMContentLoaded', function() {
             else if (index === 1) medal = '🥈';
             else if (index === 2) medal = '🥉';
             
+            // Определяем статус результата для текущего игрока
+            let statusText = 'Personal Best';
+            if (isCurrentPlayer) {
+                if (score > entry.score) {
+                    statusText = `New PB! (was ${entry.score})`;
+                } else if (score === entry.score) {
+                    statusText = 'Personal Best (this game)';
+                } else {
+                    statusText = `Personal Best (${entry.score})`;
+                }
+            }
+            
             entryDiv.innerHTML = `
                 <div style="display: flex; justify-content: space-between; width: 100%; align-items: center;">
                     <span class="leaderboard-rank">${medal} #${index + 1}</span>
@@ -776,21 +971,21 @@ document.addEventListener('DOMContentLoaded', function() {
                     <span class="leaderboard-score">${entry.score} pts</span>
                 </div>
                 <div style="font-size: 10px; color: #888888; margin-top: 2px;">
-                    ${entry.timestamp || 'Unknown time'}
+                    ${statusText} • ${entry.timestamp || 'Unknown time'}
                 </div>
             `;
             
             leaderboardListElement.appendChild(entryDiv);
         });
         
-        // Показываем информацию о том, сколько всего результатов
+        // Показываем информацию о том, сколько всего персональных рекордов
         if (leaderboard.length > 15) {
             const moreDiv = document.createElement('div');
             moreDiv.style.textAlign = 'center';
             moreDiv.style.color = '#888888';
             moreDiv.style.fontSize = '12px';
             moreDiv.style.marginTop = '10px';
-            moreDiv.innerHTML = `... and ${leaderboard.length - 15} more results`;
+            moreDiv.innerHTML = `... and ${leaderboard.length - 15} more players`;
             leaderboardListElement.appendChild(moreDiv);
         }
     }
@@ -877,6 +1072,92 @@ document.addEventListener('DOMContentLoaded', function() {
     function gameLoop() {
         moveSnake();
         drawGame();
+    }
+
+    // Инициализация Firebase и игры
+    async function initializeGame() {
+        // Сначала загружаем локальные данные
+        loadLeaderboard();
+        
+        updateConnectionStatus('connecting', '🔄 Connecting to online leaderboard...', '#888');
+        
+        try {
+            console.log('Waiting for Firebase initialization...');
+            
+            // Увеличиваем таймаут для GitHub Pages
+            const timeoutMs = isProduction ? 30000 : 15000;
+            
+            await Promise.race([
+                waitForFirebase(),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Firebase timeout')), timeoutMs))
+            ]);
+            
+            console.log('Firebase ready event received');
+            
+            // Получаем Firebase объекты
+            database = window.firebaseDB;
+            firebaseFunctions = window.firebaseFunctions;
+            
+            if (!database || !firebaseFunctions) {
+                throw new Error('Firebase objects not available');
+            }
+            
+            firebaseReady = true;
+            
+            // Пробуем загрузить данные - это более надежный тест чем .info/connected
+            console.log('Testing Firebase with actual data load...');
+            
+            try {
+                const initialData = await loadLeaderboardFromFirebase();
+                console.log(`Successfully loaded ${initialData.length} scores from Firebase`);
+                
+                if (initialData.length > 0) {
+                    leaderboard = initialData;
+                    
+                    // Обновляем рекорд
+                    if (leaderboard.length > 0) {
+                        highScore = Math.max(highScore, leaderboard[0].score);
+                        highScoreElement.textContent = highScore;
+                    }
+                }
+                
+                // Настраиваем real-time обновления
+                setupRealtimeLeaderboard();
+                
+                updateConnectionStatus('connected', '🟢 Connected to online leaderboard', '#4CAF50');
+                console.log('Firebase connection confirmed by data load');
+                
+            } catch (loadError) {
+                console.warn('Could not load initial data, but Firebase may still work:', loadError);
+                
+                // Все равно пробуем настроить real-time обновления
+                setupRealtimeLeaderboard();
+                
+                updateConnectionStatus('partial', '🟡 Partial connection (writes may work)', '#ff9800');
+            }
+            
+        } catch (error) {
+            console.error('Firebase initialization failed:', error);
+            firebaseReady = false;
+            
+            let errorMessage = '🔴 Offline mode (local scores only)';
+            
+            if (error.message.includes('timeout')) {
+                errorMessage = '⏱️ Connection timeout (using local scores)';
+            } else if (error.message.includes('blocked')) {
+                errorMessage = '🚫 Connection blocked (using local scores)';
+            }
+            
+            updateConnectionStatus('failed', errorMessage, '#f44336');
+        }
+        
+        // Инициализируем игру независимо от Firebase
+        drawGame();
+        if (nicknameInputElement) {
+            nicknameInputElement.focus();
+        }
+        
+        setInterval(gameLoop, 150);
     }
 
     // Event listeners
@@ -987,127 +1268,6 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
-    // Детектируем окружение
-    const isProduction = window.location.hostname.includes('github.io');
-    const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-
-    // Обновляем статус соединения
-    function updateConnectionStatus(status, message, color) {
-        if (connectionStatusElement) {
-            connectionStatusElement.innerHTML = message;
-            connectionStatusElement.style.color = color;
-        }
-        
-        // Добавляем отладочную информацию
-        const debugInfo = document.getElementById('debugInfo');
-        const envInfo = document.getElementById('envInfo');
-        const protectionInfo = document.getElementById('protectionInfo');
-        
-        if (debugInfo && envInfo && !isProduction) {
-            debugInfo.style.display = 'block';
-            envInfo.textContent = `${isProduction ? 'Production' : 'Development'} | ${window.location.hostname} | Firebase: ${status}`;
-        }
-        
-        if (protectionInfo) {
-            const protectionStatus = window.APP_PROTECTED ? 'Active ✅' : 'Inactive ❌';
-            protectionInfo.textContent = protectionStatus;
-            protectionInfo.style.color = window.APP_PROTECTED ? '#4CAF50' : '#f44336';
-        }
-        
-        console.log(`Connection status: ${status} - ${message}`);
-        
-        // Дополнительный лог для защиты
-        if (window.EXTENSION_PROTECTION_LOG) {
-            console.log('Extension protection log:', window.EXTENSION_PROTECTION_LOG);
-        }
-    }
-
-    // Инициализация Firebase и игры
-    async function initializeGame() {
-        // Сначала загружаем локальные данные
-        loadLeaderboard();
-        
-        updateConnectionStatus('connecting', '🔄 Connecting to online leaderboard...', '#888');
-        
-        try {
-            console.log('Waiting for Firebase initialization...');
-            
-            // Увеличиваем таймаут для GitHub Pages
-            const timeoutMs = isProduction ? 30000 : 15000;
-            
-            await Promise.race([
-                waitForFirebase(),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('Firebase timeout')), timeoutMs))
-            ]);
-            
-            console.log('Firebase ready event received');
-            
-            // Получаем Firebase объекты
-            database = window.firebaseDB;
-            firebaseFunctions = window.firebaseFunctions;
-            
-            if (!database || !firebaseFunctions) {
-                throw new Error('Firebase objects not available');
-            }
-            
-            firebaseReady = true;
-            
-            // Пробуем загрузить данные - это более надежный тест чем .info/connected
-            console.log('Testing Firebase with actual data load...');
-            
-            try {
-                const initialData = await loadLeaderboardFromFirebase();
-                console.log(`Successfully loaded ${initialData.length} scores from Firebase`);
-                
-                if (initialData.length > 0) {
-                    leaderboard = initialData;
-                    
-                    // Обновляем рекорд
-                    if (leaderboard.length > 0) {
-                        highScore = Math.max(highScore, leaderboard[0].score);
-                        highScoreElement.textContent = highScore;
-                    }
-                }
-                
-                // Настраиваем real-time обновления
-                setupRealtimeLeaderboard();
-                
-                updateConnectionStatus('connected', '🟢 Connected to online leaderboard', '#4CAF50');
-                console.log('Firebase connection confirmed by data load');
-                
-            } catch (loadError) {
-                console.warn('Could not load initial data, but Firebase may still work:', loadError);
-                
-                // Все равно пробуем настроить real-time обновления
-                setupRealtimeLeaderboard();
-                
-                updateConnectionStatus('partial', '🟡 Partial connection (writes may work)', '#ff9800');
-            }
-            
-        } catch (error) {
-            console.error('Firebase initialization failed:', error);
-            firebaseReady = false;
-            
-            let errorMessage = '🔴 Offline mode (local scores only)';
-            
-            if (error.message.includes('timeout')) {
-                errorMessage = '⏱️ Connection timeout (using local scores)';
-            } else if (error.message.includes('blocked')) {
-                errorMessage = '🚫 Connection blocked (using local scores)';
-            }
-            
-            updateConnectionStatus('failed', errorMessage, '#f44336');
-        }
-        
-        // Инициализируем игру независимо от Firebase
-        drawGame();
-        if (nicknameInputElement) {
-            nicknameInputElement.focus();
-        }
-        
-        setInterval(gameLoop, 150);
-    }
-
     // Слушаем события Firebase
     window.addEventListener('firebaseReady', (event) => {
         console.log('Firebase ready event received in main script');
@@ -1133,24 +1293,84 @@ document.addEventListener('DOMContentLoaded', function() {
             isLocalhost,
             firebaseReady,
             leaderboardLength: leaderboard.length,
+            uniquePlayersCount: leaderboard.length,
             protectionActive: window.APP_PROTECTED,
-            extensionErrorsSuppressed: window.EXTENSION_ERRORS_SUPPRESSED
+            extensionErrorsSuppressed: window.EXTENSION_ERRORS_SUPPRESSED,
+            personalBestSystem: 'enabled'
         });
+        
+        // Показываем персональные рекорды текущего игрока
+        if (playerNickname) {
+            const currentPlayerRecord = leaderboard.find(entry => entry.name === playerNickname);
+            console.log(`📊 ${playerNickname}'s record:`, currentPlayerRecord || 'No record yet');
+        }
+    };
+    
+    window.debugPersonalBestSystem = function() {
+        console.log('🏆 Personal Best System Info:', {
+            enabled: true,
+            description: 'Each player can have only one record - their best score',
+            totalRecords: leaderboard.length,
+            uniquePlayers: leaderboard.length,
+            recordsPreview: leaderboard.slice(0, 5).map(entry => ({
+                name: entry.name,
+                score: entry.score,
+                timestamp: entry.timestamp
+            }))
+        });
+        
+        // Проверяем дубликаты (их не должно быть)
+        const nameCount = {};
+        leaderboard.forEach(entry => {
+            nameCount[entry.name] = (nameCount[entry.name] || 0) + 1;
+        });
+        
+        const duplicates = Object.entries(nameCount).filter(([name, count]) => count > 1);
+        console.log('🔍 Duplicate check:', duplicates.length === 0 ? 'No duplicates found ✅' : 'Duplicates detected ❌', duplicates);
     };
     
     window.debugFirebaseConnection = function() {
         if (firebaseReady && database) {
             console.log('🔥 Testing Firebase connection...');
             
-            firebaseFunctions.onValue(
-                firebaseFunctions.ref(database, '.info/connected'),
-                (snapshot) => {
-                    console.log('Firebase connection test result:', snapshot.val());
-                },
-                { onlyOnce: true }
-            );
+            // Тест записи
+            const testRef = firebaseFunctions.ref(database, 'debug_test');
+            firebaseFunctions.push(testRef, {
+                test: 'personal_best_system',
+                timestamp: Date.now(),
+                url: window.location.href
+            }).then(() => {
+                console.log('✅ Firebase write test successful');
+                updateConnectionStatus('connected', '🟢 Connection confirmed by test write', '#4CAF50');
+            }).catch((error) => {
+                console.log('❌ Firebase write test failed:', error);
+                updateConnectionStatus('readonly', '🟡 Read-only connection detected', '#ff9800');
+            });
+            
+            // Тест чтения
+            const scoresRef = firebaseFunctions.ref(database, 'scores');
+            firebaseFunctions.onValue(scoresRef, (snapshot) => {
+                const data = snapshot.val();
+                const totalRecords = data ? Object.keys(data).length : 0;
+                const uniquePlayers = data ? [...new Set(Object.values(data).map(entry => entry.name))].length : 0;
+                
+                console.log('✅ Firebase read test result:', {
+                    totalRecords,
+                    uniquePlayers,
+                    personalBestFiltering: totalRecords > uniquePlayers ? 'needed' : 'not needed'
+                });
+            }, {
+                onlyOnce: true
+            });
         } else {
             console.log('❌ Firebase not ready for testing');
+            console.log('Debug info:', {
+                firebaseReady,
+                database: !!database,
+                firebaseFunctions: !!firebaseFunctions,
+                windowFirebaseDB: !!window.firebaseDB,
+                windowFirebaseReady: !!window.firebaseReady
+            });
         }
     };
     
@@ -1172,6 +1392,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!isProduction) {
             console.log('📊 Automatic debug report:');
             window.debugGameStatus();
+            window.debugPersonalBestSystem();
             window.debugExtensionProtection();
             window.debugFirebaseConnection();
         }
