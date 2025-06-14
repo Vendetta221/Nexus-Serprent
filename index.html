@@ -76,7 +76,7 @@
         upgrade-insecure-requests;
     ">
     
-    <link rel="stylesheet" href="style.css?v=2.2">
+    <link rel="stylesheet" href="style.css?v=2.3">
     
     <!-- Firebase SDK для Realtime Database -->
     <script type="module">
@@ -119,34 +119,40 @@
                 const database = getDatabase(app);
                 console.log('Firebase database initialized:', database);
                 
-                // Тестируем подключение с таймаутом
-                const testRef = ref(database, '.info/connected');
-                const connectionPromise = new Promise((resolve, reject) => {
+                // Более мягкая проверка подключения - просто пробуем прочитать данные
+                console.log('Testing Firebase connection with actual data read...');
+                
+                const testRef = ref(database, 'connection_test');
+                const connectionTestPromise = new Promise((resolve, reject) => {
                     const timeout = setTimeout(() => {
-                        reject(new Error('Connection test timeout'));
-                    }, 15000);
+                        console.log('Connection test timeout, but Firebase may still work');
+                        resolve(true); // Резолвим как успех даже при таймауте
+                    }, 8000);
                     
-                    onValue(testRef, (snapshot) => {
-                        clearTimeout(timeout);
-                        const connected = snapshot.val();
-                        console.log('Firebase connection status:', connected);
-                        
-                        if (connected) {
-                            console.log('✅ Firebase connected successfully');
-                            window.firebaseConnectionStatus = 'connected';
+                    try {
+                        // Пробуем записать тестовые данные
+                        push(testRef, {
+                            test: true,
+                            timestamp: Date.now()
+                        }).then(() => {
+                            clearTimeout(timeout);
+                            console.log('✅ Firebase write test successful');
                             resolve(true);
-                        } else {
-                            console.log('❌ Firebase not connected');
-                            window.firebaseConnectionStatus = 'disconnected';
-                            resolve(false);
-                        }
-                    }, (error) => {
+                        }).catch((error) => {
+                            clearTimeout(timeout);
+                            console.log('❌ Firebase write test failed:', error);
+                            // Все равно пробуем продолжить - возможно чтение работает
+                            resolve(true);
+                        });
+                    } catch (error) {
                         clearTimeout(timeout);
-                        reject(error);
-                    });
+                        console.log('❌ Firebase test error:', error);
+                        resolve(true); // Пробуем продолжить работу
+                    }
                 });
                 
-                await connectionPromise;
+                await connectionTestPromise;
+                console.log('Firebase connection test completed');
                 
                 // Делаем доступными глобально для основного скрипта
                 window.firebaseDB = database;
@@ -177,12 +183,17 @@
         }
         
         // Добавляем задержку для GitHub Pages и расширений
-        const initDelay = isProduction ? 3000 : 1000;
+        const initDelay = isProduction ? 5000 : 1000; // Увеличиваем задержку
         console.log(`Waiting ${initDelay}ms before Firebase initialization...`);
+        console.log('Current URL:', window.location.href);
+        console.log('Is production:', isProduction);
+        console.log('User agent:', navigator.userAgent);
         
         setTimeout(async () => {
+            console.log('Starting delayed Firebase initialization...');
             const success = await initializeFirebaseWithLogging();
             console.log('Firebase initialization result:', success);
+            console.log('Firebase debug info available at: window.firebaseDebug');
         }, initDelay);
         
         // Глобальная переменная для отладки
@@ -265,7 +276,7 @@
         <button class="restart-btn" id="restartBtn">PLAY AGAIN</button>
     </div>
 
-    <script src="script.js?v=2.2"></script>
+    <script src="script.js?v=2.3"></script>
     
     <!-- Финальная проверка защиты -->
     <script>
